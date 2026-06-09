@@ -123,7 +123,6 @@ export default function PontoEquilibrio() {
           onChange={(e) => setMes(e.target.value || mesAtual())}
           style={{ width: 180 }}
         />
-        <span className="badge badge-orange">{formatMesLabel(mes)}</span>
         <span style={{ marginLeft: 'auto', fontSize: 12, color: '#aaa' }}>
           {loading ? 'Carregando…' : !error && dados ? `${int(dados.totalPedidos)} pedido(s) no mês` : ''}
         </span>
