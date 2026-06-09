@@ -1,0 +1,136 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================================
+// Insumos (matérias-primas)
+// ============================================================
+model Insumo {
+  id             Int      @id @default(autoincrement())
+  nome           String
+  unidade        String
+  custoUnitario  Decimal  @db.Decimal(12, 4)
+  fornecedor     String?
+  ativo          Boolean  @default(true)
+  criadoEm       DateTime @default(now())
+  atualizadoEm   DateTime @updatedAt
+
+  fichaTecnicaItens FichaTecnicaItem[]
+
+  @@index([nome])
+  @@index([ativo])
+}
+
+// ============================================================
+// Produtos (itens vendidos)
+// ============================================================
+model Produto {
+  id           Int      @id @default(autoincrement())
+  nome         String
+  descricao    String?
+  precoVenda   Decimal  @db.Decimal(12, 2)
+  ativo        Boolean  @default(true)
+  criadoEm     DateTime @default(now())
+  atualizadoEm DateTime @updatedAt
+
+  fichaTecnica FichaTecnicaItem[]
+
+  @@index([nome])
+  @@index([ativo])
+}
+
+// ============================================================
+// Ficha técnica (composição produto x insumo)
+// ============================================================
+model FichaTecnicaItem {
+  id           Int      @id @default(autoincrement())
+  produtoId    Int
+  insumoId     Int
+  quantidade   Decimal  @db.Decimal(12, 4)
+  criadoEm     DateTime @default(now())
+  atualizadoEm DateTime @updatedAt
+
+  produto Produto @relation(fields: [produtoId], references: [id], onDelete: Cascade)
+  insumo  Insumo  @relation(fields: [insumoId], references: [id], onDelete: Restrict)
+
+  @@unique([produtoId, insumoId])
+  @@index([produtoId])
+  @@index([insumoId])
+}
+
+// ============================================================
+// Custos fixos (recorrentes mensais — sem mês de referência no MVP)
+// ============================================================
+model CustoFixo {
+  id           Int      @id @default(autoincrement())
+  nome         String
+  valorMensal  Decimal  @db.Decimal(12, 2)
+  tipo         String?
+  observacao   String?
+  ativo        Boolean  @default(true)
+  criadoEm     DateTime @default(now())
+  atualizadoEm DateTime @updatedAt
+
+  @@index([ativo])
+}
+
+// ============================================================
+// Custos variáveis
+// ============================================================
+enum CategoriaCustoVariavel {
+  TAXA_CARTAO
+  MARKETPLACE
+  EMBALAGEM
+  ENTREGA
+  IMPOSTO
+  CUPOM
+  COMISSAO
+  OUTROS
+}
+
+enum TipoCalculoCustoVariavel {
+  PERCENTUAL_FATURAMENTO
+  VALOR_POR_PEDIDO
+  VALOR_FIXO_MENSAL_VARIAVEL
+}
+
+model CustoVariavel {
+  id           Int                       @id @default(autoincrement())
+  nome         String
+  categoria    CategoriaCustoVariavel
+  tipoCalculo  TipoCalculoCustoVariavel
+  valor        Decimal                   @db.Decimal(12, 4)
+  ativo        Boolean                   @default(true)
+  criadoEm     DateTime                  @default(now())
+  atualizadoEm DateTime                  @updatedAt
+
+  @@index([ativo])
+  @@index([categoria])
+}
+
+// ============================================================
+// Faturamento diário
+// ============================================================
+model FaturamentoDiario {
+  id                Int      @id @default(autoincrement())
+  data              DateTime @db.Date
+  valorTotal        Decimal  @db.Decimal(12, 2)
+  quantidadePedidos Int
+  canal             String?
+  observacoes       String?
+  ativo             Boolean  @default(true)
+  criadoEm          DateTime @default(now())
+  atualizadoEm      DateTime @updatedAt
+
+  @@index([data])
+  @@index([canal])
+  @@index([ativo])
+}
