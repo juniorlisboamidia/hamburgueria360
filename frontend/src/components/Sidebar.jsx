@@ -1,17 +1,17 @@
 import { NavLink } from 'react-router-dom'
 
-const principal = [
-  { to: '/',              label: 'Dashboard' },
-  { to: '/produtos',      label: 'Produtos' },
-  { to: '/insumos',       label: 'Insumos' },
-  { to: '/ficha-tecnica', label: 'Ficha Técnica' }
+const visaoGeral = [
+  { to: '/', label: 'Dashboard' }
 ]
 
-const financeiro = [
-  { to: '/custos-fixos',     label: 'Custos Fixos' },
-  { to: '/custos-variaveis', label: 'Custos Variáveis' },
-  { to: '/faturamento',      label: 'Faturamento' },
-  { to: '/ponto-equilibrio', label: 'Ponto de Equilíbrio' }
+const precificacao = [
+  { to: '/produtos', label: 'Produtos' },
+  { to: '/insumos',  label: 'Insumos' }
+]
+
+const gestao = [
+  { to: '/custos-fixos', label: 'Custos' },
+  { to: '/faturamento',  label: 'Faturamento' }
 ]
 
 function itemClass({ isActive }) {
@@ -30,15 +30,22 @@ export default function Sidebar() {
       </div>
 
       <nav className="sidebar-nav">
-        <div className="sidebar-section-label">Principal</div>
-        {principal.map((item) => (
+        <div className="sidebar-section-label">Visão Geral</div>
+        {visaoGeral.map((item) => (
           <NavLink key={item.to} to={item.to} end={item.to === '/'} className={itemClass}>
             {item.label}
           </NavLink>
         ))}
 
-        <div className="sidebar-section-label">Financeiro</div>
-        {financeiro.map((item) => (
+        <div className="sidebar-section-label">Precificação</div>
+        {precificacao.map((item) => (
+          <NavLink key={item.to} to={item.to} className={itemClass}>
+            {item.label}
+          </NavLink>
+        ))}
+
+        <div className="sidebar-section-label">Gestão</div>
+        {gestao.map((item) => (
           <NavLink key={item.to} to={item.to} className={itemClass}>
             {item.label}
           </NavLink>

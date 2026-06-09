@@ -38,19 +38,30 @@ const STATUS_LABEL = {
   SEM_FICHA: 'Sem ficha',
   SEM_PRECO: 'Sem preço'
 }
-const VALUE_VARIANT = {
-  SAUDAVEL:  'success',
-  ATENCAO:   'warn',
-  ALERTA:    'brand',
-  CRITICO:   'danger',
-  SEM_FICHA: 'info',
-  SEM_PRECO: 'info'
-}
 const CMV_COLOR_CLASS = {
   SAUDAVEL:  'clr-green',
   ATENCAO:   'clr-yellow',
   ALERTA:    'clr-orange',
   CRITICO:   'clr-red'
+}
+
+const metricRowStyle = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'baseline',
+  fontSize: 13,
+  padding: '5px 0',
+  borderBottom: '1px solid #f5f5f5'
+}
+const metricLabelStyle = { color: '#888', fontSize: 12 }
+
+function MetricRow({ label, children }) {
+  return (
+    <div style={metricRowStyle}>
+      <span style={metricLabelStyle}>{label}</span>
+      <span>{children}</span>
+    </div>
+  )
 }
 
 export default function Produtos() {
@@ -107,27 +118,30 @@ export default function Produtos() {
 
   // Métricas agregadas
   const totalAtivos = produtos.length
-  const semFicha = produtos.filter((p) => p.analise.statusCmv === 'SEM_FICHA').length
-  const criticos = produtos.filter((p) => p.analise.statusCmv === 'CRITICO').length
-
-  const valorComCmv = produtos.filter(
-    (p) => p.analise.cmvPercentual !== null && p.analise.cmvPercentual !== undefined
-  )
-  const cmvMedio =
-    valorComCmv.length === 0
-      ? null
-      : valorComCmv.reduce((s, p) => s + Number(p.analise.cmvPercentual), 0) / valorComCmv.length
-  const margemMedia =
-    valorComCmv.length === 0
-      ? null
-      : valorComCmv.reduce((s, p) => s + Number(p.analise.margemBrutaPercentual), 0) /
-        valorComCmv.length
+  const semFicha = produtos.filter((p) => p.analise?.statusCmv === 'SEM_FICHA').length
+  const criticos = produtos.filter((p) => p.analise?.statusCmv === 'CRITICO').length
+  const fichasCadastradas = totalAtivos - semFicha
 
   return (
     <div>
+      <div className="page-header">
+        <div>
+          <h1>Produtos</h1>
+          <div className="page-header-sub">
+            Cadastro de produtos, ficha técnica, CMV e precificação.
+          </div>
+        </div>
+        <span className="badge badge-orange">Precificação</span>
+      </div>
+
       <div className="section-title">Resumo</div>
-      <div className="grid-3" style={{ marginBottom: 12 }}>
-        <Card title="Total Ativos" value={int(totalAtivos)} hint="Produtos cadastrados" variant="info" />
+      <div className="grid-4" style={{ marginBottom: 4 }}>
+        <Card
+          title="Produtos Cadastrados"
+          value={int(totalAtivos)}
+          hint="Ativos no cardápio"
+          variant="info"
+        />
         <Card
           title="Sem Ficha Técnica"
           value={int(semFicha)}
@@ -140,87 +154,95 @@ export default function Produtos() {
           hint="Acima de 40%"
           variant={criticos > 0 ? 'danger' : 'success'}
         />
-      </div>
-      <div className="grid-2">
         <Card
-          title="CMV Médio"
-          value={pct(cmvMedio)}
-          hint="Apenas produtos com ficha válida"
-          variant={cmvMedio !== null && cmvMedio > 40 ? 'danger' : 'success'}
-        />
-        <Card
-          title="Margem Bruta Média"
-          value={pct(margemMedia)}
-          hint="Apenas produtos com ficha válida"
-          variant={margemMedia !== null && margemMedia > 0 ? 'success' : 'info'}
+          title="Fichas Cadastradas"
+          value={int(fichasCadastradas)}
+          hint="Produtos com composição"
+          variant={fichasCadastradas > 0 ? 'success' : 'info'}
         />
       </div>
 
-      <div className="section-title">Produtos</div>
+      <div className="section-title">Produtos e Fichas</div>
 
       {totalAtivos === 0 ? (
         <div className="empty-state">
           Nenhum produto cadastrado. Cadastre um produto e a ficha técnica para começar a acompanhar o CMV.
         </div>
       ) : (
-        <div className="table-card">
-          <table className="hb-table">
-            <thead>
-              <tr>
-                <th>Produto</th>
-                <th>Preço de venda</th>
-                <th>Custo da ficha</th>
-                <th>CMV / Margem</th>
-                <th>Status</th>
-                <th style={{ textAlign: 'right' }}>Ações</th>
-              </tr>
-            </thead>
-            <tbody>
-              {produtos.map((p) => {
-                const a = p.analise
-                const semFichaProduto = a.statusCmv === 'SEM_FICHA'
-                const cmvClass = CMV_COLOR_CLASS[a.statusCmv] ?? ''
+        <div className="grid-3">
+          {produtos.map((p) => {
+            const a = p.analise ?? {}
+            const semFichaProduto = a.statusCmv === 'SEM_FICHA'
+            const cmvClass = CMV_COLOR_CLASS[a.statusCmv] ?? ''
+            const lucroPositivo =
+              a.lucroBruto !== null && a.lucroBruto !== undefined && Number(a.lucroBruto) > 0
 
-                return (
-                  <tr key={p.id}>
-                    <td>
-                      <div style={{ fontWeight: 500, color: '#111' }}>{p.nome}</div>
-                      {p.descricao && (
-                        <div style={{ fontSize: 11, color: '#aaa', marginTop: 2 }}>
-                          {p.descricao}
-                        </div>
-                      )}
-                    </td>
-                    <td>{brl(p.precoVenda)}</td>
-                    <td className={semFichaProduto ? 'clr-muted' : ''}>
-                      {semFichaProduto ? 'Não cadastrado' : brl(a.custoFichaTecnica)}
-                    </td>
-                    <td>
-                      {a.cmvPercentual === null ? (
-                        <span className="clr-muted">—</span>
-                      ) : (
-                        <span className={cmvClass}>
-                          {pct(a.cmvPercentual)}
-                          <span style={{ color: '#ddd', margin: '0 6px' }}>·</span>
-                          <span style={{ color: '#666' }}>{pct(a.margemBrutaPercentual)}</span>
-                        </span>
-                      )}
-                    </td>
-                    <td>
-                      <span className={'badge ' + (STATUS_BADGE[a.statusCmv] ?? 'badge-gray')}>
-                        {STATUS_LABEL[a.statusCmv] ?? a.statusCmv}
-                      </span>
-                    </td>
-                    <td style={{ textAlign: 'right' }}>
-                      <Link to={`/ficha-tecnica/${p.id}`} className="btn btn-secondary">
-                        Editar ficha
-                      </Link>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+            return (
+              <div key={p.id} className="card" style={{ display: 'flex', flexDirection: 'column' }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'flex-start',
+                    gap: 8,
+                    marginBottom: 10
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 600, color: '#111', fontSize: 14 }}>{p.nome}</div>
+                    {p.descricao && (
+                      <div style={{ fontSize: 11, color: '#aaa', marginTop: 2 }}>{p.descricao}</div>
+                    )}
+                  </div>
+                  <span className={'badge ' + (STATUS_BADGE[a.statusCmv] ?? 'badge-gray')}>
+                    {STATUS_LABEL[a.statusCmv] ?? a.statusCmv ?? '—'}
+                  </span>
+                </div>
+
+                <div style={{ flex: 1 }}>
+                  <MetricRow label="Preço de venda">
+                    <span style={{ fontWeight: 600 }}>{brl(p.precoVenda)}</span>
+                  </MetricRow>
+                  <MetricRow label="Custo da ficha">
+                    {semFichaProduto
+                      ? <span className="clr-muted">Não cadastrado</span>
+                      : brl(a.custoFichaTecnica)}
+                  </MetricRow>
+                  <MetricRow label="CMV">
+                    {a.cmvPercentual === null || a.cmvPercentual === undefined
+                      ? <span className="clr-muted">—</span>
+                      : <span className={cmvClass} style={{ fontWeight: 600 }}>{pct(a.cmvPercentual)}</span>}
+                  </MetricRow>
+                  <MetricRow label="Margem bruta">
+                    {pct(a.margemBrutaPercentual)}
+                  </MetricRow>
+                  <MetricRow label="Lucro bruto estimado">
+                    {a.lucroBruto === null || a.lucroBruto === undefined
+                      ? <span className="clr-muted">—</span>
+                      : <span className={lucroPositivo ? 'clr-green' : 'clr-red'}>{brl(a.lucroBruto)}</span>}
+                  </MetricRow>
+                  <MetricRow label="Preço sugerido">
+                    <span className="badge badge-gray">Em breve</span>
+                  </MetricRow>
+                  <MetricRow label="Preço iFood">
+                    <span className="badge badge-gray">Em breve</span>
+                  </MetricRow>
+                </div>
+
+                {a.mensagemDiagnostico && (
+                  <div style={{ fontSize: 11, color: '#999', margin: '10px 0 0', lineHeight: 1.5 }}>
+                    {a.mensagemDiagnostico}
+                  </div>
+                )}
+
+                <div style={{ marginTop: 12 }}>
+                  <Link to={`/ficha-tecnica/${p.id}`} className="btn btn-primary">
+                    Abrir ficha
+                  </Link>
+                </div>
+              </div>
+            )
+          })}
         </div>
       )}
     </div>
