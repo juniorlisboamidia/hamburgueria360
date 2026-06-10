@@ -203,6 +203,15 @@ a { text-decoration: none; color: inherit; }
 .grid-4 { display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; }
 .grid-5 { display: grid; grid-template-columns: repeat(5,1fr); gap: 12px; }
 
+/* Responsividade básica: grids quebram em telas menores */
+@media (max-width: 1100px) {
+  .grid-3, .grid-4, .grid-5 { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 640px) {
+  .grid-2, .grid-3, .grid-4, .grid-5 { grid-template-columns: 1fr; }
+  .page-header { flex-direction: column; }
+}
+
 /* Section title */
 .section-title {
   font-size: 10px;
@@ -238,7 +247,7 @@ a { text-decoration: none; color: inherit; }
 .clr-muted  { color: #aaa; }
 
 /* Tabela */
-.table-card { background: #fff; border: 0.5px solid #e8e8e8; border-radius: 12px; overflow: hidden; }
+.table-card { background: #fff; border: 0.5px solid #e8e8e8; border-radius: 12px; overflow: hidden; overflow-x: auto; }
 .hb-table   { width: 100%; border-collapse: collapse; }
 .hb-table th {
   font-size: 10px; font-weight: 600; color: #bbb;
@@ -277,6 +286,10 @@ a { text-decoration: none; color: inherit; }
 .empty-state   { text-align: center; padding: 48px; color: #aaa; font-size: 14px; }
 
 /* Formulário */
+.form-grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+@media (max-width: 560px) {
+  .form-grid-2 { grid-template-columns: 1fr; }
+}
 .form-group { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
 .form-label { font-size: 12px; font-weight: 500; color: #555; }
 .form-input {

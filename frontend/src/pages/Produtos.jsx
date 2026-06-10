@@ -90,6 +90,16 @@ const metricRowStyle = {
 }
 const metricLabelStyle = { color: '#888', fontSize: 12 }
 
+const priceLabelStyle = {
+  fontSize: 10,
+  fontWeight: 600,
+  color: '#aaa',
+  textTransform: 'uppercase',
+  letterSpacing: 0.5,
+  marginBottom: 2
+}
+const pricePendingStyle = { fontSize: 12, fontWeight: 500, color: '#aaa' }
+
 function MetricRow({ label, children }) {
   return (
     <div style={metricRowStyle}>
@@ -369,19 +379,38 @@ export default function Produtos() {
           {produtos.map((p) => {
             const a = p.analise ?? {}
             const semFichaProduto = a.statusCmv === 'SEM_FICHA'
+            const semPrecoProduto = a.statusCmv === 'SEM_PRECO'
             const cmvClass = CMV_COLOR_CLASS[a.statusCmv] ?? ''
             const lucroPositivo =
               a.lucroBruto !== null && a.lucroBruto !== undefined && Number(a.lucroBruto) > 0
+            const abaixoDoSugerido =
+              a.diferencaPrecoSugerido !== null &&
+              a.diferencaPrecoSugerido !== undefined &&
+              Number(a.diferencaPrecoSugerido) < 0
+
+            const diagnosticos = []
+            if (semFichaProduto) {
+              diagnosticos.push({ texto: 'Ficha técnica pendente', cls: 'clr-muted' })
+            } else if (semPrecoProduto) {
+              diagnosticos.push({ texto: 'Preço de venda pendente', cls: 'clr-muted' })
+            } else {
+              if (a.statusCmv === 'ATENCAO') diagnosticos.push({ texto: 'CMV em atenção', cls: 'clr-yellow' })
+              if (a.statusCmv === 'ALERTA') diagnosticos.push({ texto: 'CMV em alerta', cls: 'clr-orange' })
+              if (a.statusCmv === 'CRITICO') diagnosticos.push({ texto: 'CMV crítico', cls: 'clr-red' })
+              if (abaixoDoSugerido) diagnosticos.push({ texto: 'Preço abaixo do sugerido', cls: 'clr-orange' })
+              if (diagnosticos.length === 0) diagnosticos.push({ texto: 'Precificação saudável', cls: 'clr-green' })
+            }
 
             return (
               <div key={p.id} className="card" style={{ display: 'flex', flexDirection: 'column' }}>
+                {/* Bloco 1 — Identidade */}
                 <div
                   style={{
                     display: 'flex',
                     justifyContent: 'space-between',
                     alignItems: 'flex-start',
                     gap: 8,
-                    marginBottom: 10
+                    marginBottom: 12
                   }}
                 >
                   <div>
@@ -395,10 +424,47 @@ export default function Produtos() {
                   </span>
                 </div>
 
+                {/* Bloco 2 — Preços principais */}
+                <div
+                  style={{
+                    display: 'flex',
+                    gap: 8,
+                    flexWrap: 'wrap',
+                    background: '#fafafa',
+                    border: '1px solid #f0f0f0',
+                    borderRadius: 10,
+                    padding: '10px 12px',
+                    marginBottom: 12
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 86 }}>
+                    <div style={priceLabelStyle}>Venda</div>
+                    <div style={{ fontSize: 17, fontWeight: 600, color: '#111', letterSpacing: '-0.3px' }}>
+                      {p.precoVenda === null || p.precoVenda === undefined
+                        ? <span style={pricePendingStyle}>Pendente</span>
+                        : brl(p.precoVenda)}
+                    </div>
+                  </div>
+                  <div style={{ flex: 1, minWidth: 86 }}>
+                    <div style={priceLabelStyle}>Sugerido</div>
+                    <div className="clr-blue" style={{ fontSize: 15, fontWeight: 600 }}>
+                      {a.precoSugerido === null || a.precoSugerido === undefined
+                        ? <span style={pricePendingStyle}>{semFichaProduto ? 'Sem ficha' : 'Pendente'}</span>
+                        : brl(a.precoSugerido)}
+                    </div>
+                  </div>
+                  <div style={{ flex: 1, minWidth: 86 }}>
+                    <div style={priceLabelStyle}>iFood</div>
+                    <div className="clr-orange" style={{ fontSize: 15, fontWeight: 600 }}>
+                      {a.precoIfood === null || a.precoIfood === undefined
+                        ? <span style={pricePendingStyle}>{semFichaProduto ? 'Sem ficha' : 'Pendente'}</span>
+                        : brl(a.precoIfood)}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Bloco 3 — Indicadores técnicos */}
                 <div style={{ flex: 1 }}>
-                  <MetricRow label="Preço de venda">
-                    <span style={{ fontWeight: 600 }}>{brl(p.precoVenda)}</span>
-                  </MetricRow>
                   <MetricRow label="Custo da ficha">
                     {semFichaProduto
                       ? <span className="clr-muted">Não cadastrado</span>
@@ -412,28 +478,30 @@ export default function Produtos() {
                   <MetricRow label="Margem bruta">
                     {pct(a.margemBrutaPercentual)}
                   </MetricRow>
-                  <MetricRow label="Lucro bruto estimado">
+                  <MetricRow label="Lucro bruto">
                     {a.lucroBruto === null || a.lucroBruto === undefined
                       ? <span className="clr-muted">—</span>
                       : <span className={lucroPositivo ? 'clr-green' : 'clr-red'}>{brl(a.lucroBruto)}</span>}
                   </MetricRow>
-                  <MetricRow label="Preço sugerido">
-                    {a.precoSugerido === null || a.precoSugerido === undefined
-                      ? <span className="badge badge-gray">{semFichaProduto ? 'Sem ficha' : 'Pendente'}</span>
-                      : <span style={{ fontWeight: 600 }} className="clr-blue">{brl(a.precoSugerido)}</span>}
-                  </MetricRow>
-                  <MetricRow label="Preço iFood">
-                    {a.precoIfood === null || a.precoIfood === undefined
-                      ? <span className="badge badge-gray">{semFichaProduto ? 'Sem ficha' : 'Pendente'}</span>
-                      : <span style={{ fontWeight: 600 }} className="clr-orange">{brl(a.precoIfood)}</span>}
-                  </MetricRow>
                 </div>
 
-                {a.mensagemDiagnostico && (
-                  <div style={{ fontSize: 11, color: '#999', margin: '10px 0 0', lineHeight: 1.5 }}>
-                    {a.mensagemDiagnostico}
-                  </div>
-                )}
+                {/* Bloco 4 — Diagnóstico */}
+                <div
+                  style={{
+                    marginTop: 10,
+                    paddingTop: 8,
+                    borderTop: '1px solid #f5f5f5',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 3
+                  }}
+                >
+                  {diagnosticos.map((d) => (
+                    <div key={d.texto} className={d.cls} style={{ fontSize: 11.5, fontWeight: 500 }}>
+                      {d.texto}
+                    </div>
+                  ))}
+                </div>
 
                 <div style={{ marginTop: 12, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                   <button
@@ -588,7 +656,7 @@ function ConfigPrecificacaoModal({ onClose, onSaved }) {
         ) : (
           <form onSubmit={handleSave}>
             <div className="section-title" style={{ marginTop: 0 }}>Venda Direta</div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 6 }}>
+            <div className="form-grid-2" style={{ marginBottom: 8 }}>
               <div className="form-group" style={{ marginBottom: 0 }}>
                 <label className="form-label">CMV alvo (%)</label>
                 <input
@@ -619,7 +687,7 @@ function ConfigPrecificacaoModal({ onClose, onSaved }) {
             </div>
 
             <div className="section-title">iFood</div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div className="form-grid-2">
               {fieldDef.map(([campo, label]) => (
                 <div key={campo} className="form-group" style={{ marginBottom: 0 }}>
                   <label className="form-label">{label}</label>
@@ -635,13 +703,14 @@ function ConfigPrecificacaoModal({ onClose, onSaved }) {
               ))}
             </div>
             <div style={{ fontSize: 11.5, color: '#999', marginTop: 10 }}>
-              O preço iFood usa o preço de venda definido no produto e considera taxa iFood,
-              campanha inteligente, entrega/cupom e ticket médio delivery.
+              Preço iFood parte do preço de venda e soma o impacto de taxa, campanha, entrega,
+              cupom e ticket médio.
             </div>
 
+            <div className="section-title">Resumo</div>
             <div
               className="alert alert-gray"
-              style={{ marginTop: 12, marginBottom: 0, display: 'flex', gap: 20 }}
+              style={{ marginTop: 0, marginBottom: 0, display: 'flex', gap: 20, flexWrap: 'wrap' }}
             >
               <div className="alert-msg">
                 Taxa iFood total:{' '}
@@ -1033,14 +1102,14 @@ function FichaModal({ produtoId, onClose, onChanged }) {
               </form>
             </div>
 
-            {/* Seção 2 — Resumo técnico */}
-            <div className="section-title">Resumo Técnico</div>
-            <div className="grid-4">
+            {/* Seção 2 — Resumo financeiro */}
+            <div className="section-title">Resumo Financeiro</div>
+            <div className="grid-5">
               <Card title="Preço de Venda" value={brl(analise?.precoVenda)} hint="Cadastrado no produto" variant="brand" />
               <Card
-                title="Custo da Ficha"
+                title="Custo Total Real"
                 value={brl(custoTotal)}
-                hint={semFicha ? 'Sem itens' : 'Soma dos insumos'}
+                hint={semFicha ? 'Sem itens na ficha' : 'Base do CMV real'}
               />
               <Card
                 title="CMV"
@@ -1057,73 +1126,30 @@ function FichaModal({ produtoId, onClose, onChanged }) {
               <Card
                 title="Margem Bruta"
                 value={pct(analise?.margemBrutaPercentual)}
-                hint={analise?.lucroBruto === null ? 'Indisponível' : `Lucro: ${brl(analise?.lucroBruto)}`}
+                hint="Sobre o preço de venda"
                 variant={
                   analise?.margemBrutaPercentual !== null && analise?.margemBrutaPercentual > 0
                     ? 'success'
                     : 'info'
                 }
               />
-            </div>
-            <div className="grid-3" style={{ marginTop: 12 }}>
               <Card
                 title="Lucro Bruto"
                 value={analise?.lucroBruto === null || analise?.lucroBruto === undefined
                   ? '—'
                   : brl(analise.lucroBruto)}
-                hint="Preço − custo da ficha"
+                hint="Preço − custo real"
                 variant={analise?.lucroBruto !== null && Number(analise?.lucroBruto) > 0 ? 'success' : 'info'}
               />
-              <Card
-                title="Preço Sugerido"
-                value={analise?.precoSugerido === null || analise?.precoSugerido === undefined
-                  ? 'Pendente'
-                  : brl(analise.precoSugerido)}
-                hint="Venda direta (margem alvo)"
-                variant="info"
-              />
-              <Card
-                title="Preço iFood"
-                value={analise?.precoIfood === null || analise?.precoIfood === undefined
-                  ? 'Pendente'
-                  : brl(analise.precoIfood)}
-                hint="Baseado no preço de venda"
-                variant="brand"
-              />
-            </div>
-            <div className="grid-3" style={{ marginTop: 12 }}>
-              <Card
-                title="Custo com Margem"
-                value={brl(fichaTotais.custoComMargem)}
-                hint="Ingredientes e produção própria"
-                variant="success"
-              />
-              <Card
-                title="Custos Embutidos"
-                value={brl(fichaTotais.custoEmbutido)}
-                hint="Embalagem, acompanhamento, operacional"
-                variant="warn"
-              />
-              <Card
-                title="Custo Total Real"
-                value={brl(fichaTotais.custoTotalFicha)}
-                hint="Base do CMV real"
-                variant="brand"
-              />
-            </div>
-            <div className="alert alert-gray" style={{ marginTop: 12 }}>
-              <div className="alert-msg">
-                Embalagens, acompanhamentos e custos operacionais entram no custo real do produto,
-                mas podem ficar fora da base de margem para evitar overprice.
-              </div>
             </div>
 
-            {/* Precificação técnica */}
+            {/* Seção 3 — Precificação técnica */}
             <div className="section-title">Precificação Técnica</div>
             <div className="grid-2">
               <div className="card">
                 <div className="card-label">Venda Direta</div>
                 <MetricRow label="CMV alvo">{pct(analise?.cmvAlvoPercentual)}</MetricRow>
+                <MetricRow label="Lucro desejado">{pct(analise?.lucroDesejadoPercentual)}</MetricRow>
                 <MetricRow label="Custo com margem">{brl(analise?.custoComMargem)}</MetricRow>
                 <MetricRow label="Custos embutidos">{brl(analise?.custoEmbutido)}</MetricRow>
                 <MetricRow label="Preço sugerido">
@@ -1134,7 +1160,7 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                   </span>
                 </MetricRow>
                 <MetricRow label="Preço atual">{brl(analise?.precoVenda)}</MetricRow>
-                <MetricRow label="Diferença para sugerido">
+                <MetricRow label="Diferença para preço atual">
                   {analise?.diferencaPrecoSugerido === null || analise?.diferencaPrecoSugerido === undefined
                     ? <span className="clr-muted">—</span>
                     : (
@@ -1176,9 +1202,10 @@ function FichaModal({ produtoId, onClose, onChanged }) {
             )}
             <div className="alert alert-gray" style={{ marginTop: 8 }}>
               <div className="alert-msg">
-                Preço sugerido usa margem sobre ingredientes e soma custos embutidos sem overprice.
-                Preço iFood usa o preço de venda definido no produto e considera taxa iFood,
-                campanha inteligente, entrega/cupom e ticket médio delivery.
+                Preço sugerido considera o custo da ficha, o CMV alvo e os custos embutidos.
+                Preço iFood parte do preço de venda e soma o impacto de taxa, campanha, entrega,
+                cupom e ticket médio. Embalagens, acompanhamentos e custos operacionais entram no
+                custo real, mas ficam fora da base de margem.
               </div>
             </div>
 
@@ -1196,114 +1223,12 @@ function FichaModal({ produtoId, onClose, onChanged }) {
               )
             )}
 
-            {/* Seção 3 — Itens da ficha técnica */}
-            <div className="section-title">Adicionar Insumo</div>
-            <div className="card">
-              <form onSubmit={handleAddItem}>
-                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-                  <div className="form-group" style={{ marginBottom: 0, flex: 2, minWidth: 200 }}>
-                    <label className="form-label">Insumo</label>
-                    <select
-                      className="form-input"
-                      value={formInsumoId}
-                      onChange={(e) => handleSelectInsumo(e.target.value)}
-                    >
-                      <option value="">— selecione —</option>
-                      {insumos.map((i) => (
-                        <option key={i.id} value={i.id}>
-                          {i.nome} ({brl(i.custoUnitario)} / {i.unidade})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="form-group" style={{ marginBottom: 0, flex: 0.8, minWidth: 100 }}>
-                    <label className="form-label">Quantidade</label>
-                    <input
-                      className="form-input"
-                      type="number"
-                      min="0"
-                      step="0.0001"
-                      value={formQty}
-                      onChange={(e) => setFormQty(e.target.value)}
-                      placeholder="0"
-                    />
-                  </div>
-                  <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 130 }}>
-                    <label className="form-label">Tipo de uso</label>
-                    <select
-                      className="form-input"
-                      value={formTipoUso}
-                      onChange={(e) => setFormTipoUso(e.target.value)}
-                    >
-                      {TIPO_USO_OPTIONS.map((o) => (
-                        <option key={o.value} value={o.value}>{o.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 130 }}>
-                    <label className="form-label">Forma de rateio</label>
-                    <select
-                      className="form-input"
-                      value={formRateio}
-                      onChange={(e) => setFormRateio(e.target.value)}
-                    >
-                      {RATEIO_OPTIONS.map((o) => (
-                        <option key={o.value} value={o.value}>{o.label}</option>
-                      ))}
-                    </select>
-                  </div>
-                  {formRateio !== 'POR_PRODUTO' && (
-                    <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 150 }}>
-                      <label className="form-label">{ATENDIDA_LABEL[formRateio]}</label>
-                      <input
-                        className="form-input"
-                        type="number"
-                        min="0"
-                        step="0.001"
-                        value={formAtendida}
-                        onChange={(e) => setFormAtendida(e.target.value)}
-                        placeholder="Ex.: 2"
-                      />
-                    </div>
-                  )}
-                  <div className="form-group" style={{ marginBottom: 0, minWidth: 110 }}>
-                    <label className="form-label">Aplicar margem?</label>
-                    <label
-                      className="form-input"
-                      style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={formMargem}
-                        onChange={(e) => setFormMargem(e.target.checked)}
-                      />
-                      <span style={{ fontSize: 13, color: '#555' }}>{formMargem ? 'Sim' : 'Não'}</span>
-                    </label>
-                  </div>
-                  <button type="submit" className="btn btn-primary" disabled={itemSubmitting}>
-                    {itemSubmitting ? 'Adicionando…' : 'Adicionar item'}
-                  </button>
-                </div>
-                {itemError && (
-                  <div className="alert alert-red" style={{ marginTop: 12, marginBottom: 0 }}>
-                    <div className="alert-msg clr-red">{itemError}</div>
-                  </div>
-                )}
-                {insumos.length === 0 && (
-                  <div className="alert alert-yellow" style={{ marginTop: 12, marginBottom: 0 }}>
-                    <div className="alert-msg clr-yellow">
-                      Nenhum insumo ativo cadastrado. Cadastre insumos antes de montar a ficha.
-                    </div>
-                  </div>
-                )}
-              </form>
-            </div>
-
-            <div className="section-title">Itens da Ficha</div>
+            {/* Seção 4 — Ficha técnica */}
+            <div className="section-title">Ficha Técnica</div>
 
             {itens.length === 0 ? (
               <div className="empty-state">
-                Ficha técnica vazia. Adicione o primeiro insumo no formulário acima — assim que houver
+                Ficha técnica vazia. Adicione o primeiro insumo no formulário abaixo — assim que houver
                 pelo menos um item, o CMV e a margem serão recalculados.
               </div>
             ) : (
@@ -1494,6 +1419,109 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                 </div>
               </>
             )}
+
+            {/* Seção 5 — Adicionar item */}
+            <div className="section-title">Adicionar Item</div>
+            <div className="card">
+              <form onSubmit={handleAddItem}>
+                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                  <div className="form-group" style={{ marginBottom: 0, flex: 2, minWidth: 200 }}>
+                    <label className="form-label">Insumo</label>
+                    <select
+                      className="form-input"
+                      value={formInsumoId}
+                      onChange={(e) => handleSelectInsumo(e.target.value)}
+                    >
+                      <option value="">— selecione —</option>
+                      {insumos.map((i) => (
+                        <option key={i.id} value={i.id}>
+                          {i.nome} ({brl(i.custoUnitario)} / {i.unidade})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0, flex: 0.8, minWidth: 100 }}>
+                    <label className="form-label">Quantidade</label>
+                    <input
+                      className="form-input"
+                      type="number"
+                      min="0"
+                      step="0.0001"
+                      value={formQty}
+                      onChange={(e) => setFormQty(e.target.value)}
+                      placeholder="0"
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 130 }}>
+                    <label className="form-label">Tipo de uso</label>
+                    <select
+                      className="form-input"
+                      value={formTipoUso}
+                      onChange={(e) => setFormTipoUso(e.target.value)}
+                    >
+                      {TIPO_USO_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 130 }}>
+                    <label className="form-label">Forma de rateio</label>
+                    <select
+                      className="form-input"
+                      value={formRateio}
+                      onChange={(e) => setFormRateio(e.target.value)}
+                    >
+                      {RATEIO_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {formRateio !== 'POR_PRODUTO' && (
+                    <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 150 }}>
+                      <label className="form-label">{ATENDIDA_LABEL[formRateio]}</label>
+                      <input
+                        className="form-input"
+                        type="number"
+                        min="0"
+                        step="0.001"
+                        value={formAtendida}
+                        onChange={(e) => setFormAtendida(e.target.value)}
+                        placeholder="Ex.: 2"
+                      />
+                    </div>
+                  )}
+                  <div className="form-group" style={{ marginBottom: 0, minWidth: 110 }}>
+                    <label className="form-label">Aplicar margem?</label>
+                    <label
+                      className="form-input"
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={formMargem}
+                        onChange={(e) => setFormMargem(e.target.checked)}
+                      />
+                      <span style={{ fontSize: 13, color: '#555' }}>{formMargem ? 'Sim' : 'Não'}</span>
+                    </label>
+                  </div>
+                  <button type="submit" className="btn btn-primary" disabled={itemSubmitting}>
+                    {itemSubmitting ? 'Adicionando…' : 'Adicionar item'}
+                  </button>
+                </div>
+                {itemError && (
+                  <div className="alert alert-red" style={{ marginTop: 12, marginBottom: 0 }}>
+                    <div className="alert-msg clr-red">{itemError}</div>
+                  </div>
+                )}
+                {insumos.length === 0 && (
+                  <div className="alert alert-yellow" style={{ marginTop: 12, marginBottom: 0 }}>
+                    <div className="alert-msg clr-yellow">
+                      Nenhum insumo ativo cadastrado. Cadastre insumos antes de montar a ficha.
+                    </div>
+                  </div>
+                )}
+              </form>
+            </div>
           </>
         )}
       </div>
