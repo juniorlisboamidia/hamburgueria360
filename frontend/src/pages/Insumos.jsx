@@ -6,10 +6,15 @@ const brlFormatter = new Intl.NumberFormat('pt-BR', {
   style: 'currency',
   currency: 'BRL'
 })
+const qtyFormatter = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 4 })
 
 function brl(value) {
   if (value === null || value === undefined) return '—'
   return brlFormatter.format(Number(value))
+}
+function num(value) {
+  if (value === null || value === undefined) return '—'
+  return qtyFormatter.format(Number(value))
 }
 
 const TIPOS = [
@@ -75,6 +80,7 @@ export default function Insumos() {
   const [submitting, setSubmitting] = useState(false)
 
   const [deletingId, setDeletingId] = useState(null)
+  const [receitaInsumoId, setReceitaInsumoId] = useState(null)
 
   function load() {
     setLoading(true)
@@ -91,6 +97,15 @@ export default function Insumos() {
         )
         setLoading(false)
       })
+  }
+
+  // Recarrega a lista sem o loading de página inteira
+  // (usado pelo modal de receita para atualizar a tabela atrás dele)
+  function refresh() {
+    return api
+      .get('/insumos')
+      .then((r) => setInsumos(r.data))
+      .catch(() => {})
   }
 
   useEffect(() => { load() }, [])
@@ -310,6 +325,15 @@ export default function Insumos() {
         </div>
       )}
 
+      {receitaInsumoId !== null && (
+        <ReceitaModal
+          insumoId={receitaInsumoId}
+          insumosLista={insumos}
+          onClose={() => setReceitaInsumoId(null)}
+          onChanged={refresh}
+        />
+      )}
+
       <div className="section-title">Resumo</div>
       <div className="grid-4">
         <Card title="Total de Insumos" value={total} hint="Ativos na base" variant="info" />
@@ -398,6 +422,15 @@ export default function Insumos() {
                   </td>
                   <td style={{ textAlign: 'right' }}>
                     <div style={{ display: 'inline-flex', gap: 6 }}>
+                      {i.tipo === 'PRODUCAO_PROPRIA' && (
+                        <button
+                          type="button"
+                          className="btn btn-primary"
+                          onClick={() => setReceitaInsumoId(i.id)}
+                        >
+                          Abrir receita
+                        </button>
+                      )}
                       <button type="button" className="btn btn-secondary" onClick={() => openEdit(i)}>
                         Editar
                       </button>
@@ -417,6 +450,538 @@ export default function Insumos() {
           </table>
         </div>
       )}
+    </div>
+  )
+}
+
+// ============ Modal grande: receita de produção própria ============
+
+const RECEITA_FORM_BLANK = {
+  rendimento: '',
+  unidadeRendimento: '',
+  pesoPorcao: '',
+  unidadePorcao: '',
+  observacoes: ''
+}
+
+function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
+  const [insumo, setInsumo] = useState(null)
+  const [receita, setReceita] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [feedback, setFeedback] = useState(null)
+
+  const [dadosForm, setDadosForm] = useState(RECEITA_FORM_BLANK)
+  const [dadosError, setDadosError] = useState(null)
+  const [dadosSaving, setDadosSaving] = useState(false)
+
+  const [ingId, setIngId] = useState('')
+  const [ingQty, setIngQty] = useState('')
+  const [ingError, setIngError] = useState(null)
+  const [ingSubmitting, setIngSubmitting] = useState(false)
+
+  const [editingItemId, setEditingItemId] = useState(null)
+  const [editingQty, setEditingQty] = useState('')
+  const [editError, setEditError] = useState(null)
+  const [editSubmitting, setEditSubmitting] = useState(false)
+
+  const [custoSaving, setCustoSaving] = useState(false)
+
+  function applyResponse(data) {
+    setInsumo(data.insumo)
+    setReceita(data.receita)
+    if (data.receita) {
+      setDadosForm({
+        rendimento: String(Number(data.receita.rendimento)),
+        unidadeRendimento: data.receita.unidadeRendimento ?? '',
+        pesoPorcao:
+          data.receita.pesoPorcao === null || data.receita.pesoPorcao === undefined
+            ? ''
+            : String(Number(data.receita.pesoPorcao)),
+        unidadePorcao: data.receita.unidadePorcao ?? '',
+        observacoes: data.receita.observacoes ?? ''
+      })
+    }
+  }
+
+  function loadAll() {
+    setLoading(true)
+    setError(null)
+    api
+      .get(`/insumos/${insumoId}/receita`)
+      .then((r) => {
+        applyResponse(r.data)
+        setLoading(false)
+      })
+      .catch((err) => {
+        setError(err?.response?.data?.error ?? err?.message ?? 'Erro inesperado.')
+        setLoading(false)
+      })
+  }
+
+  useEffect(() => { loadAll() }, [insumoId])
+
+  function handleSaveDados(e) {
+    e.preventDefault()
+    setDadosError(null)
+    setFeedback(null)
+    const r = Number(dadosForm.rendimento)
+    if (dadosForm.rendimento === '' || !Number.isFinite(r) || r <= 0) {
+      setDadosError('rendimento é obrigatório e deve ser maior que zero')
+      return
+    }
+    if (!dadosForm.unidadeRendimento.trim()) {
+      setDadosError('unidade do rendimento é obrigatória')
+      return
+    }
+    if (dadosForm.pesoPorcao !== '' && (!Number.isFinite(Number(dadosForm.pesoPorcao)) || Number(dadosForm.pesoPorcao) <= 0)) {
+      setDadosError('peso da porção deve ser maior que zero')
+      return
+    }
+    setDadosSaving(true)
+    api
+      .post(`/insumos/${insumoId}/receita`, {
+        rendimento: r,
+        unidadeRendimento: dadosForm.unidadeRendimento.trim(),
+        pesoPorcao: dadosForm.pesoPorcao === '' ? null : Number(dadosForm.pesoPorcao),
+        unidadePorcao: dadosForm.unidadePorcao.trim() === '' ? null : dadosForm.unidadePorcao.trim(),
+        observacoes: dadosForm.observacoes.trim() === '' ? null : dadosForm.observacoes.trim()
+      })
+      .then((res) => {
+        applyResponse(res.data)
+        setFeedback('Dados da receita salvos.')
+      })
+      .catch((e) =>
+        setDadosError(e?.response?.data?.error ?? e?.message ?? 'Erro ao salvar receita.')
+      )
+      .finally(() => setDadosSaving(false))
+  }
+
+  function handleAddIngrediente(e) {
+    e.preventDefault()
+    setIngError(null)
+    setFeedback(null)
+    if (!ingId) {
+      setIngError('Selecione um insumo.')
+      return
+    }
+    const q = Number(ingQty)
+    if (!Number.isFinite(q) || q <= 0) {
+      setIngError('Quantidade deve ser maior que zero.')
+      return
+    }
+    setIngSubmitting(true)
+    api
+      .post(`/insumos/${insumoId}/receita/itens`, {
+        insumoId: Number(ingId),
+        quantidade: q
+      })
+      .then((res) => {
+        applyResponse(res.data)
+        setIngId('')
+        setIngQty('')
+      })
+      .catch((err) =>
+        setIngError(err?.response?.data?.error ?? err?.message ?? 'Erro ao adicionar ingrediente.')
+      )
+      .finally(() => setIngSubmitting(false))
+  }
+
+  function startEditItem(item) {
+    setEditingItemId(item.id)
+    setEditingQty(String(Number(item.quantidade)))
+    setEditError(null)
+  }
+  function cancelEditItem() {
+    setEditingItemId(null)
+    setEditingQty('')
+    setEditError(null)
+  }
+  function saveEditItem() {
+    setEditError(null)
+    setFeedback(null)
+    const q = Number(editingQty)
+    if (!Number.isFinite(q) || q <= 0) {
+      setEditError('Quantidade deve ser maior que zero.')
+      return
+    }
+    setEditSubmitting(true)
+    api
+      .put(`/receitas-producao/itens/${editingItemId}`, { quantidade: q })
+      .then((res) => {
+        applyResponse(res.data)
+        cancelEditItem()
+      })
+      .catch((err) =>
+        setEditError(err?.response?.data?.error ?? err?.message ?? 'Erro ao salvar.')
+      )
+      .finally(() => setEditSubmitting(false))
+  }
+
+  function handleDeleteItem(item) {
+    const ok = window.confirm(`Remover "${item.insumo.nome}" da receita?`)
+    if (!ok) return
+    setFeedback(null)
+    api
+      .delete(`/receitas-producao/itens/${item.id}`)
+      .then((res) => applyResponse(res.data))
+      .catch((err) =>
+        window.alert(err?.response?.data?.error ?? err?.message ?? 'Erro ao remover.')
+      )
+  }
+
+  function handleAtualizarCusto() {
+    setFeedback(null)
+    setCustoSaving(true)
+    api
+      .post(`/insumos/${insumoId}/receita/atualizar-custo`)
+      .then((res) => {
+        applyResponse(res.data)
+        setFeedback('Custo do insumo atualizado com base na receita.')
+        return onChanged()
+      })
+      .catch((err) =>
+        window.alert(err?.response?.data?.error ?? err?.message ?? 'Erro ao atualizar custo.')
+      )
+      .finally(() => setCustoSaving(false))
+  }
+
+  // Ingredientes disponíveis: ativos, sem o próprio insumo e sem produção própria
+  const opcoesIngrediente = insumosLista.filter(
+    (i) => i.id !== insumoId && i.tipo !== 'PRODUCAO_PROPRIA'
+  )
+
+  const itens = receita?.itens ?? []
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal modal-card-large">
+        <div className="modal-header">
+          <div>
+            <div style={{ fontSize: 17, fontWeight: 600, color: '#111' }}>
+              Receita de produção própria
+            </div>
+            <div style={{ fontSize: 12.5, color: '#999', marginTop: 2 }}>
+              {insumo?.nome ?? '…'}
+            </div>
+          </div>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>
+            Fechar
+          </button>
+        </div>
+
+        {loading ? (
+          <div className="loading-state">Carregando receita…</div>
+        ) : error ? (
+          <div className="alert alert-red">
+            <div>
+              <div className="alert-title clr-red">Não foi possível carregar a receita</div>
+              <div className="alert-msg">{error}</div>
+              <div style={{ marginTop: 10 }}>
+                <button type="button" className="btn btn-secondary" onClick={loadAll}>
+                  Tentar novamente
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <>
+            {feedback && (
+              <div className="alert alert-green" style={{ marginBottom: 12 }}>
+                <div className="alert-msg clr-green">{feedback}</div>
+              </div>
+            )}
+
+            {/* Seção 1 — Dados da receita */}
+            <div className="section-title" style={{ marginTop: 0 }}>Dados da Receita</div>
+            <div className="card">
+              <form onSubmit={handleSaveDados}>
+                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                  <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 110 }}>
+                    <label className="form-label">Rendimento</label>
+                    <input
+                      className="form-input"
+                      type="number"
+                      min="0"
+                      step="0.001"
+                      value={dadosForm.rendimento}
+                      onChange={(e) => setDadosForm({ ...dadosForm, rendimento: e.target.value })}
+                      placeholder="Ex.: 2"
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 110 }}>
+                    <label className="form-label">Unidade do rendimento</label>
+                    <input
+                      className="form-input"
+                      type="text"
+                      value={dadosForm.unidadeRendimento}
+                      onChange={(e) => setDadosForm({ ...dadosForm, unidadeRendimento: e.target.value })}
+                      placeholder="kg, l, porções..."
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 110 }}>
+                    <label className="form-label">Peso da porção (opcional)</label>
+                    <input
+                      className="form-input"
+                      type="number"
+                      min="0"
+                      step="0.001"
+                      value={dadosForm.pesoPorcao}
+                      onChange={(e) => setDadosForm({ ...dadosForm, pesoPorcao: e.target.value })}
+                      placeholder="Ex.: 0,030"
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 110 }}>
+                    <label className="form-label">Unidade da porção</label>
+                    <input
+                      className="form-input"
+                      type="text"
+                      value={dadosForm.unidadePorcao}
+                      onChange={(e) => setDadosForm({ ...dadosForm, unidadePorcao: e.target.value })}
+                      placeholder="kg, g..."
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0, flex: 1.5, minWidth: 150 }}>
+                    <label className="form-label">Observações (opcional)</label>
+                    <input
+                      className="form-input"
+                      type="text"
+                      value={dadosForm.observacoes}
+                      onChange={(e) => setDadosForm({ ...dadosForm, observacoes: e.target.value })}
+                      placeholder="Modo de preparo, validade..."
+                    />
+                  </div>
+                  <button type="submit" className="btn btn-primary" disabled={dadosSaving}>
+                    {dadosSaving ? 'Salvando…' : 'Salvar dados da receita'}
+                  </button>
+                </div>
+                {dadosError && (
+                  <div className="alert alert-red" style={{ marginTop: 12, marginBottom: 0 }}>
+                    <div className="alert-msg clr-red">{dadosError}</div>
+                  </div>
+                )}
+              </form>
+            </div>
+
+            {receita === null ? (
+              <div className="alert alert-gray" style={{ marginTop: 12 }}>
+                <div className="alert-msg">
+                  Este insumo ainda não possui receita. Salve os dados da receita acima
+                  (pelo menos rendimento e unidade) para liberar o cadastro de ingredientes.
+                </div>
+              </div>
+            ) : (
+              <>
+                {/* Seção 2 — Resumo do custo */}
+                <div className="section-title">Resumo do Custo</div>
+                <div className="grid-4">
+                  <Card
+                    title="Custo Total da Receita"
+                    value={brl(receita.custoTotalReceita)}
+                    hint="Soma dos ingredientes"
+                    variant="brand"
+                  />
+                  <Card
+                    title="Rendimento"
+                    value={`${num(receita.rendimento)} ${receita.unidadeRendimento}`}
+                    hint={
+                      receita.pesoPorcao
+                        ? `Porção: ${num(receita.pesoPorcao)} ${receita.unidadePorcao ?? ''}`
+                        : 'Sem porção definida'
+                    }
+                  />
+                  <Card
+                    title="Custo Unitário Calculado"
+                    value={brl(receita.custoPorRendimento)}
+                    hint={
+                      receita.custoPorPorcao !== null
+                        ? `Por ${receita.unidadeRendimento} · porção: ${brl(receita.custoPorPorcao)}`
+                        : `Por ${receita.unidadeRendimento}`
+                    }
+                    variant="success"
+                  />
+                  <Card
+                    title="Custo Atual do Insumo"
+                    value={brl(insumo?.custoUnitario)}
+                    hint={`Por ${insumo?.unidade ?? '—'} (em uso nas fichas)`}
+                    variant="info"
+                  />
+                </div>
+                <div
+                  className="card"
+                  style={{
+                    marginTop: 12,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 12,
+                    flexWrap: 'wrap'
+                  }}
+                >
+                  <span style={{ fontSize: 12.5, color: '#888', flex: 1, minWidth: 240 }}>
+                    Atualizar custo do insumo substitui o custo unitário deste item pelo custo
+                    calculado da receita.
+                  </span>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={handleAtualizarCusto}
+                    disabled={custoSaving || itens.length === 0}
+                  >
+                    {custoSaving ? 'Atualizando…' : 'Atualizar custo do insumo'}
+                  </button>
+                </div>
+
+                {/* Seção 4 — Adicionar ingrediente */}
+                <div className="section-title">Adicionar Ingrediente</div>
+                <div className="card">
+                  <form onSubmit={handleAddIngrediente}>
+                    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                      <div className="form-group" style={{ marginBottom: 0, flex: 2, minWidth: 200 }}>
+                        <label className="form-label">Insumo</label>
+                        <select
+                          className="form-input"
+                          value={ingId}
+                          onChange={(e) => setIngId(e.target.value)}
+                        >
+                          <option value="">— selecione —</option>
+                          {opcoesIngrediente.map((i) => (
+                            <option key={i.id} value={i.id}>
+                              {i.nome} ({brl(i.custoUnitario)} / {i.unidade})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 110 }}>
+                        <label className="form-label">Quantidade usada</label>
+                        <input
+                          className="form-input"
+                          type="number"
+                          min="0"
+                          step="0.001"
+                          value={ingQty}
+                          onChange={(e) => setIngQty(e.target.value)}
+                          placeholder="0"
+                        />
+                      </div>
+                      <button type="submit" className="btn btn-primary" disabled={ingSubmitting}>
+                        {ingSubmitting ? 'Adicionando…' : 'Adicionar'}
+                      </button>
+                    </div>
+                    {ingError && (
+                      <div className="alert alert-red" style={{ marginTop: 12, marginBottom: 0 }}>
+                        <div className="alert-msg clr-red">{ingError}</div>
+                      </div>
+                    )}
+                    {opcoesIngrediente.length === 0 && (
+                      <div className="alert alert-yellow" style={{ marginTop: 12, marginBottom: 0 }}>
+                        <div className="alert-msg clr-yellow">
+                          Nenhum insumo disponível como ingrediente. Cadastre insumos comuns primeiro.
+                        </div>
+                      </div>
+                    )}
+                  </form>
+                </div>
+
+                {/* Seção 3 — Ingredientes da receita */}
+                <div className="section-title">Ingredientes da Receita</div>
+
+                {itens.length === 0 ? (
+                  <div className="empty-state">
+                    Nenhum ingrediente na receita. Adicione o primeiro ingrediente acima para
+                    calcular o custo da produção própria.
+                  </div>
+                ) : (
+                  <div className="table-card">
+                    <table className="hb-table">
+                      <thead>
+                        <tr>
+                          <th>Insumo</th>
+                          <th>Tipo</th>
+                          <th>Unidade</th>
+                          <th>Custo unitário</th>
+                          <th>Quantidade usada</th>
+                          <th>Custo aplicado</th>
+                          <th style={{ textAlign: 'right' }}>Ações</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {itens.map((item) => {
+                          const isEditing = editingItemId === item.id
+                          const custoUnit = Number(item.insumo.custoUnitario)
+                          const qty = isEditing ? Number(editingQty) : Number(item.quantidade)
+                          const custoAplicado = qty > 0 ? qty * custoUnit : 0
+
+                          return (
+                            <tr key={item.id} style={isEditing ? { background: '#fff7ed' } : undefined}>
+                              <td style={{ fontWeight: 500, color: '#111' }}>{item.insumo.nome}</td>
+                              <td>
+                                <span className={'badge ' + tipoBadge(item.insumo.tipo)}>
+                                  {tipoLabel(item.insumo.tipo)}
+                                </span>
+                              </td>
+                              <td style={{ color: '#888' }}>{item.insumo.unidade}</td>
+                              <td>{brl(custoUnit)}</td>
+                              <td>
+                                {isEditing ? (
+                                  <input
+                                    className="form-input"
+                                    style={{ padding: '6px 10px', fontSize: 13, width: 110 }}
+                                    type="number"
+                                    min="0"
+                                    step="0.001"
+                                    value={editingQty}
+                                    onChange={(e) => setEditingQty(e.target.value)}
+                                    autoFocus
+                                  />
+                                ) : (
+                                  <strong>{num(item.quantidade)}</strong>
+                                )}
+                              </td>
+                              <td className="clr-orange" style={{ fontWeight: 600 }}>
+                                {brl(custoAplicado)}
+                              </td>
+                              <td style={{ textAlign: 'right' }}>
+                                <div style={{ display: 'inline-flex', gap: 6 }}>
+                                  {isEditing ? (
+                                    <>
+                                      <button type="button" className="btn btn-primary" onClick={saveEditItem} disabled={editSubmitting}>
+                                        {editSubmitting ? 'Salvando…' : 'Salvar'}
+                                      </button>
+                                      <button type="button" className="btn btn-secondary" onClick={cancelEditItem} disabled={editSubmitting}>
+                                        Cancelar
+                                      </button>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <button type="button" className="btn btn-secondary" onClick={() => startEditItem(item)}>
+                                        Editar
+                                      </button>
+                                      <button type="button" className="btn btn-danger" onClick={() => handleDeleteItem(item)}>
+                                        Remover
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          )
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {editError && (
+                  <div className="alert alert-red" style={{ marginTop: 10 }}>
+                    <div className="alert-msg clr-red">{editError}</div>
+                  </div>
+                )}
+              </>
+            )}
+          </>
+        )}
+      </div>
     </div>
   )
 }

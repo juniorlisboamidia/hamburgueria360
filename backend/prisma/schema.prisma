@@ -36,9 +36,48 @@ model Insumo {
 
   fichaTecnicaItens FichaTecnicaItem[]
 
+  // Receita própria (quando o insumo é PRODUCAO_PROPRIA)
+  receitaProducao ReceitaProducao?      @relation("ReceitaDoInsumo")
+  // Usos deste insumo como ingrediente em receitas de produção própria
+  usosEmReceitas  ReceitaProducaoItem[] @relation("IngredienteDeReceita")
+
   @@index([nome])
   @@index([ativo])
   @@index([tipo])
+}
+
+// ============================================================
+// Receita de produção própria (insumo PRODUCAO_PROPRIA)
+// ============================================================
+model ReceitaProducao {
+  id                Int      @id @default(autoincrement())
+  insumoId          Int      @unique
+  rendimento        Decimal  @db.Decimal(10, 3)
+  unidadeRendimento String
+  pesoPorcao        Decimal? @db.Decimal(10, 3)
+  unidadePorcao     String?
+  observacoes       String?
+  criadoEm          DateTime @default(now())
+  atualizadoEm      DateTime @updatedAt
+
+  insumo Insumo                @relation("ReceitaDoInsumo", fields: [insumoId], references: [id], onDelete: Cascade)
+  itens  ReceitaProducaoItem[]
+}
+
+model ReceitaProducaoItem {
+  id           Int      @id @default(autoincrement())
+  receitaId    Int
+  insumoId     Int
+  quantidade   Decimal  @db.Decimal(10, 3)
+  criadoEm     DateTime @default(now())
+  atualizadoEm DateTime @updatedAt
+
+  receita ReceitaProducao @relation(fields: [receitaId], references: [id], onDelete: Cascade)
+  insumo  Insumo          @relation("IngredienteDeReceita", fields: [insumoId], references: [id], onDelete: Restrict)
+
+  @@unique([receitaId, insumoId])
+  @@index([receitaId])
+  @@index([insumoId])
 }
 
 // ============================================================

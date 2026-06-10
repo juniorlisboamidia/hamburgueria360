@@ -172,6 +172,301 @@ app.delete('/api/insumos/:id', async (req, res) => {
   }
 });
 
+// ===== Receita de Produção Própria =====
+
+const round4 = (n) => Number(n.toFixed(4));
+
+function computeReceita(receita) {
+  const itens = receita.itens.map((item) => ({
+    ...item,
+    custoItem: round4(Number(item.quantidade) * Number(item.insumo.custoUnitario))
+  }));
+  const custoTotalReceita = round4(itens.reduce((s, i) => s + i.custoItem, 0));
+  const rendimento = Number(receita.rendimento);
+  const custoPorRendimento =
+    rendimento > 0 ? round4(custoTotalReceita / rendimento) : null;
+  const pesoPorcao =
+    receita.pesoPorcao === null || receita.pesoPorcao === undefined
+      ? null
+      : Number(receita.pesoPorcao);
+  const custoPorPorcao =
+    pesoPorcao && pesoPorcao > 0 && rendimento > 0
+      ? round4((custoTotalReceita / rendimento) * pesoPorcao)
+      : null;
+  return { ...receita, itens, custoTotalReceita, custoPorRendimento, custoPorPorcao };
+}
+
+async function getReceitaCompleta(insumoId) {
+  const receita = await prisma.receitaProducao.findUnique({
+    where: { insumoId },
+    include: { itens: { include: { insumo: true }, orderBy: { id: 'asc' } } }
+  });
+  return receita ? computeReceita(receita) : null;
+}
+
+function insumoResumo(insumo) {
+  return {
+    id: insumo.id,
+    nome: insumo.nome,
+    tipo: insumo.tipo,
+    unidade: insumo.unidade,
+    custoUnitario: insumo.custoUnitario
+  };
+}
+
+app.get('/api/insumos/:id/receita', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ error: 'id inválido' });
+    }
+    const insumo = await prisma.insumo.findUnique({ where: { id } });
+    if (!insumo) {
+      return res.status(404).json({ error: 'Insumo não encontrado' });
+    }
+    const receita = await getReceitaCompleta(id);
+    res.json({ insumo: insumoResumo(insumo), receita });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro interno ao consultar receita' });
+  }
+});
+
+app.post('/api/insumos/:id/receita', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ error: 'id inválido' });
+    }
+    const insumo = await prisma.insumo.findUnique({ where: { id } });
+    if (!insumo) {
+      return res.status(404).json({ error: 'Insumo não encontrado' });
+    }
+    if (insumo.tipo !== 'PRODUCAO_PROPRIA') {
+      return res.status(400).json({
+        error: 'Receita só pode ser cadastrada para insumos do tipo PRODUCAO_PROPRIA'
+      });
+    }
+
+    const { rendimento, unidadeRendimento, pesoPorcao, unidadePorcao, observacoes } =
+      req.body ?? {};
+
+    if (rendimento === undefined || rendimento === null || isNaN(Number(rendimento))) {
+      return res.status(400).json({ error: 'rendimento é obrigatório e deve ser numérico' });
+    }
+    if (Number(rendimento) <= 0) {
+      return res.status(400).json({ error: 'rendimento deve ser maior que zero' });
+    }
+    if (typeof unidadeRendimento !== 'string' || unidadeRendimento.trim() === '') {
+      return res.status(400).json({ error: 'unidadeRendimento é obrigatória' });
+    }
+    if (pesoPorcao !== undefined && pesoPorcao !== null && pesoPorcao !== '') {
+      if (isNaN(Number(pesoPorcao)) || Number(pesoPorcao) <= 0) {
+        return res.status(400).json({ error: 'pesoPorcao deve ser numérico e maior que zero' });
+      }
+    }
+
+    const data = {
+      rendimento: Number(rendimento),
+      unidadeRendimento: unidadeRendimento.trim(),
+      pesoPorcao:
+        pesoPorcao === undefined || pesoPorcao === null || pesoPorcao === ''
+          ? null
+          : Number(pesoPorcao),
+      unidadePorcao:
+        unidadePorcao === undefined || unidadePorcao === null || String(unidadePorcao).trim() === ''
+          ? null
+          : String(unidadePorcao).trim(),
+      observacoes:
+        observacoes === undefined || observacoes === null || String(observacoes).trim() === ''
+          ? null
+          : String(observacoes).trim()
+    };
+
+    await prisma.receitaProducao.upsert({
+      where: { insumoId: id },
+      create: { insumoId: id, ...data },
+      update: data
+    });
+
+    const receita = await getReceitaCompleta(id);
+    res.json({ insumo: insumoResumo(insumo), receita });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro interno ao salvar receita' });
+  }
+});
+
+app.post('/api/insumos/:id/receita/itens', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ error: 'id inválido' });
+    }
+    const receita = await prisma.receitaProducao.findUnique({ where: { insumoId: id } });
+    if (!receita) {
+      return res.status(400).json({
+        error: 'Cadastre primeiro os dados da receita (rendimento) antes de adicionar ingredientes'
+      });
+    }
+
+    const { insumoId, quantidade } = req.body ?? {};
+    const ingredienteId = Number(insumoId);
+    if (!Number.isInteger(ingredienteId) || ingredienteId <= 0) {
+      return res.status(400).json({ error: 'insumoId inválido' });
+    }
+    if (ingredienteId === id) {
+      return res.status(400).json({
+        error: 'Uma receita não pode usar o próprio insumo como ingrediente'
+      });
+    }
+    if (quantidade === undefined || quantidade === null || isNaN(Number(quantidade))) {
+      return res.status(400).json({ error: 'quantidade é obrigatória e deve ser numérica' });
+    }
+    if (Number(quantidade) <= 0) {
+      return res.status(400).json({ error: 'quantidade deve ser maior que zero' });
+    }
+
+    const ingrediente = await prisma.insumo.findUnique({ where: { id: ingredienteId } });
+    if (!ingrediente || !ingrediente.ativo) {
+      return res.status(404).json({ error: 'Insumo ingrediente não encontrado ou inativo' });
+    }
+    if (ingrediente.tipo === 'PRODUCAO_PROPRIA') {
+      return res.status(400).json({
+        error:
+          'Nesta versão, uma receita não pode usar outro insumo de produção própria como ingrediente'
+      });
+    }
+
+    const existente = await prisma.receitaProducaoItem.findUnique({
+      where: { receitaId_insumoId: { receitaId: receita.id, insumoId: ingredienteId } }
+    });
+    if (existente) {
+      return res.status(409).json({
+        error: 'Esse insumo já está na receita. Edite a quantidade do item existente.'
+      });
+    }
+
+    await prisma.receitaProducaoItem.create({
+      data: {
+        receitaId: receita.id,
+        insumoId: ingredienteId,
+        quantidade: Number(quantidade)
+      }
+    });
+
+    const insumo = await prisma.insumo.findUnique({ where: { id } });
+    const receitaCompleta = await getReceitaCompleta(id);
+    res.status(201).json({ insumo: insumoResumo(insumo), receita: receitaCompleta });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro interno ao adicionar ingrediente' });
+  }
+});
+
+app.put('/api/receitas-producao/itens/:itemId', async (req, res) => {
+  try {
+    const itemId = Number(req.params.itemId);
+    if (!Number.isInteger(itemId) || itemId <= 0) {
+      return res.status(400).json({ error: 'itemId inválido' });
+    }
+    const item = await prisma.receitaProducaoItem.findUnique({
+      where: { id: itemId },
+      include: { receita: true }
+    });
+    if (!item) {
+      return res.status(404).json({ error: 'Item da receita não encontrado' });
+    }
+
+    const { quantidade } = req.body ?? {};
+    if (quantidade === undefined || quantidade === null || isNaN(Number(quantidade))) {
+      return res.status(400).json({ error: 'quantidade é obrigatória e deve ser numérica' });
+    }
+    if (Number(quantidade) <= 0) {
+      return res.status(400).json({ error: 'quantidade deve ser maior que zero' });
+    }
+
+    await prisma.receitaProducaoItem.update({
+      where: { id: itemId },
+      data: { quantidade: Number(quantidade) }
+    });
+
+    const insumo = await prisma.insumo.findUnique({ where: { id: item.receita.insumoId } });
+    const receitaCompleta = await getReceitaCompleta(item.receita.insumoId);
+    res.json({ insumo: insumoResumo(insumo), receita: receitaCompleta });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro interno ao atualizar ingrediente' });
+  }
+});
+
+app.delete('/api/receitas-producao/itens/:itemId', async (req, res) => {
+  try {
+    const itemId = Number(req.params.itemId);
+    if (!Number.isInteger(itemId) || itemId <= 0) {
+      return res.status(400).json({ error: 'itemId inválido' });
+    }
+    const item = await prisma.receitaProducaoItem.findUnique({
+      where: { id: itemId },
+      include: { receita: true }
+    });
+    if (!item) {
+      return res.status(404).json({ error: 'Item da receita não encontrado' });
+    }
+
+    await prisma.receitaProducaoItem.delete({ where: { id: itemId } });
+
+    const insumo = await prisma.insumo.findUnique({ where: { id: item.receita.insumoId } });
+    const receitaCompleta = await getReceitaCompleta(item.receita.insumoId);
+    res.json({ insumo: insumoResumo(insumo), receita: receitaCompleta });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro interno ao remover ingrediente' });
+  }
+});
+
+app.post('/api/insumos/:id/receita/atualizar-custo', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ error: 'id inválido' });
+    }
+    const insumo = await prisma.insumo.findUnique({ where: { id } });
+    if (!insumo) {
+      return res.status(404).json({ error: 'Insumo não encontrado' });
+    }
+    if (insumo.tipo !== 'PRODUCAO_PROPRIA') {
+      return res.status(400).json({
+        error: 'Apenas insumos do tipo PRODUCAO_PROPRIA podem ter custo calculado por receita'
+      });
+    }
+
+    const receita = await getReceitaCompleta(id);
+    if (!receita) {
+      return res.status(400).json({ error: 'Este insumo ainda não possui receita cadastrada' });
+    }
+    if (receita.itens.length === 0) {
+      return res.status(400).json({
+        error: 'A receita não possui ingredientes. Adicione ingredientes antes de atualizar o custo.'
+      });
+    }
+    if (receita.custoPorRendimento === null) {
+      return res.status(400).json({ error: 'rendimento inválido para cálculo de custo' });
+    }
+
+    const atualizado = await prisma.insumo.update({
+      where: { id },
+      data: { custoUnitario: receita.custoPorRendimento }
+    });
+
+    const receitaRecalculada = await getReceitaCompleta(id);
+    res.json({ insumo: atualizado, receita: receitaRecalculada });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro interno ao atualizar custo do insumo' });
+  }
+});
+
 // ===== Produtos =====
 
 app.get('/api/produtos', async (req, res) => {
