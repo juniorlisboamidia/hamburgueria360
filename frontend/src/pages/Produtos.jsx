@@ -465,10 +465,9 @@ export default function Produtos() {
 
 const CONFIG_FIELDS = [
   'cmvAlvoPercentual',
+  'lucroDesejadoPercentual',
   'taxaIfoodPercentual',
-  'taxaPagamentoOnlinePercentual',
-  'taxaRepasseAntecipadoPercentual',
-  'campanhaIfoodPercentual',
+  'campanhaInteligente',
   'maiorTaxaEntrega',
   'cupomDesconto',
   'ticketMedioDelivery'
@@ -482,16 +481,11 @@ function validateConfigForm(form) {
   }
   const cmv = Number(form.cmvAlvoPercentual)
   if (cmv <= 0 || cmv >= 100) return 'CMV alvo deve ser maior que 0 e menor que 100.'
-  const pcts = [
-    Number(form.taxaIfoodPercentual),
-    Number(form.taxaPagamentoOnlinePercentual),
-    Number(form.taxaRepasseAntecipadoPercentual),
-    Number(form.campanhaIfoodPercentual)
-  ]
-  if (pcts.some((p) => p < 0)) return 'Os percentuais iFood devem ser maiores ou iguais a zero.'
-  if (pcts.reduce((s, p) => s + p, 0) >= 100) {
-    return 'A soma dos percentuais iFood deve ser menor que 100.'
-  }
+  const lucro = Number(form.lucroDesejadoPercentual)
+  if (lucro < 0 || lucro >= 100) return 'Lucro desejado deve ser maior ou igual a 0 e menor que 100.'
+  const taxa = Number(form.taxaIfoodPercentual)
+  if (taxa < 0 || taxa >= 100) return 'Taxa iFood deve ser maior ou igual a 0 e menor que 100.'
+  if (Number(form.campanhaInteligente) < 0) return 'Campanha Inteligente deve ser maior ou igual a zero.'
   if (Number(form.maiorTaxaEntrega) < 0) return 'Maior taxa de entrega deve ser maior ou igual a zero.'
   if (Number(form.cupomDesconto) < 0) return 'Cupom de desconto deve ser maior ou igual a zero.'
   if (Number(form.ticketMedioDelivery) <= 0) return 'Ticket médio delivery deve ser maior que zero.'
@@ -515,10 +509,9 @@ function ConfigPrecificacaoModal({ onClose, onSaved }) {
         const toStr = (v) => (v === null || v === undefined ? '' : String(Number(v)))
         setForm({
           cmvAlvoPercentual: toStr(c.cmvAlvoPercentual),
+          lucroDesejadoPercentual: toStr(c.lucroDesejadoPercentual),
           taxaIfoodPercentual: toStr(c.taxaIfoodPercentual),
-          taxaPagamentoOnlinePercentual: toStr(c.taxaPagamentoOnlinePercentual),
-          taxaRepasseAntecipadoPercentual: toStr(c.taxaRepasseAntecipadoPercentual),
-          campanhaIfoodPercentual: toStr(c.campanhaIfoodPercentual),
+          campanhaInteligente: toStr(c.campanhaInteligente),
           maiorTaxaEntrega: toStr(c.maiorTaxaEntrega),
           cupomDesconto: toStr(c.cupomDesconto),
           ticketMedioDelivery: toStr(c.ticketMedioDelivery)
@@ -555,23 +548,18 @@ function ConfigPrecificacaoModal({ onClose, onSaved }) {
   }
 
   const numOrZero = (v) => (Number.isFinite(Number(v)) && v !== '' ? Number(v) : 0)
-  const percentualTotal = form
-    ? numOrZero(form.taxaIfoodPercentual) +
-      numOrZero(form.taxaPagamentoOnlinePercentual) +
-      numOrZero(form.taxaRepasseAntecipadoPercentual) +
-      numOrZero(form.campanhaIfoodPercentual)
-    : 0
-  const entregaCupomTotal = form
-    ? numOrZero(form.maiorTaxaEntrega) + numOrZero(form.cupomDesconto)
+  const taxaIfoodTotal = form ? numOrZero(form.taxaIfoodPercentual) : 0
+  const custosRateaveis = form
+    ? numOrZero(form.campanhaInteligente) +
+      numOrZero(form.maiorTaxaEntrega) +
+      numOrZero(form.cupomDesconto)
     : 0
 
   const fieldDef = [
     ['taxaIfoodPercentual', 'Taxa iFood (%)'],
-    ['taxaPagamentoOnlinePercentual', 'Taxa pagamento online (%)'],
-    ['taxaRepasseAntecipadoPercentual', 'Taxa repasse antecipado (%)'],
-    ['campanhaIfoodPercentual', 'Campanha iFood (%)'],
+    ['campanhaInteligente', 'Campanha Inteligente (R$)'],
     ['maiorTaxaEntrega', 'Maior taxa de entrega (R$)'],
-    ['cupomDesconto', 'Cupom de desconto (R$)'],
+    ['cupomDesconto', 'Cupom (R$)'],
     ['ticketMedioDelivery', 'Ticket médio delivery (R$)']
   ]
 
@@ -600,20 +588,34 @@ function ConfigPrecificacaoModal({ onClose, onSaved }) {
         ) : (
           <form onSubmit={handleSave}>
             <div className="section-title" style={{ marginTop: 0 }}>Venda Direta</div>
-            <div className="form-group" style={{ marginBottom: 6 }}>
-              <label className="form-label">CMV alvo (%)</label>
-              <input
-                className="form-input"
-                type="number"
-                min="0"
-                step="0.01"
-                value={form.cmvAlvoPercentual}
-                onChange={(e) => setForm({ ...form, cmvAlvoPercentual: e.target.value })}
-                autoFocus
-              />
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 6 }}>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">CMV alvo (%)</label>
+                <input
+                  className="form-input"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={form.cmvAlvoPercentual}
+                  onChange={(e) => setForm({ ...form, cmvAlvoPercentual: e.target.value })}
+                  autoFocus
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Lucro desejado (%)</label>
+                <input
+                  className="form-input"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={form.lucroDesejadoPercentual}
+                  onChange={(e) => setForm({ ...form, lucroDesejadoPercentual: e.target.value })}
+                />
+              </div>
             </div>
             <div style={{ fontSize: 11.5, color: '#999', marginBottom: 12 }}>
-              Usado para calcular o preço sugerido com base no custo com margem e custos embutidos.
+              CMV alvo e lucro desejado ajudam a avaliar se o produto está saudável e a formar o
+              preço sugerido.
             </div>
 
             <div className="section-title">iFood</div>
@@ -633,8 +635,8 @@ function ConfigPrecificacaoModal({ onClose, onSaved }) {
               ))}
             </div>
             <div style={{ fontSize: 11.5, color: '#999', marginTop: 10 }}>
-              O preço iFood usa o preço de venda definido no produto e considera taxas, campanha,
-              entrega/cupom e ticket médio delivery.
+              O preço iFood usa o preço de venda definido no produto e considera taxa iFood,
+              campanha inteligente, entrega/cupom e ticket médio delivery.
             </div>
 
             <div
@@ -642,13 +644,13 @@ function ConfigPrecificacaoModal({ onClose, onSaved }) {
               style={{ marginTop: 12, marginBottom: 0, display: 'flex', gap: 20 }}
             >
               <div className="alert-msg">
-                Percentual total iFood:{' '}
-                <strong className={percentualTotal >= 100 ? 'clr-red' : 'clr-orange'}>
-                  {pct(percentualTotal)}
+                Taxa iFood total:{' '}
+                <strong className={taxaIfoodTotal >= 100 ? 'clr-red' : 'clr-orange'}>
+                  {pct(taxaIfoodTotal)}
                 </strong>
               </div>
               <div className="alert-msg">
-                Entrega/cupom total: <strong className="clr-orange">{brl(entregaCupomTotal)}</strong>
+                Custos iFood rateáveis: <strong className="clr-orange">{brl(custosRateaveis)}</strong>
               </div>
             </div>
 
@@ -1151,15 +1153,13 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                   <span style={{ fontWeight: 600 }}>{brl(analise?.precoVenda)}</span>
                 </MetricRow>
                 <MetricRow label="Taxa iFood">{pct(analise?.taxaIfoodPercentual)}</MetricRow>
-                <MetricRow label="Taxa pagamento online">{pct(analise?.taxaPagamentoOnlinePercentual)}</MetricRow>
-                <MetricRow label="Taxa repasse antecipado">{pct(analise?.taxaRepasseAntecipadoPercentual)}</MetricRow>
-                <MetricRow label="Campanha iFood">{pct(analise?.campanhaIfoodPercentual)}</MetricRow>
-                <MetricRow label="Percentual total">{pct(analise?.percentualIfoodTotal)}</MetricRow>
+                <MetricRow label="Campanha Inteligente">{brl(analise?.campanhaInteligente)}</MetricRow>
                 <MetricRow label="Maior taxa de entrega">{brl(analise?.maiorTaxaEntrega)}</MetricRow>
-                <MetricRow label="Cupom de desconto">{brl(analise?.cupomDesconto)}</MetricRow>
+                <MetricRow label="Cupom">{brl(analise?.cupomDesconto)}</MetricRow>
                 <MetricRow label="Ticket médio delivery">{brl(analise?.ticketMedioDelivery)}</MetricRow>
-                <MetricRow label="Preço base com taxas">{brl(analise?.precoIfoodBaseTaxas)}</MetricRow>
-                <MetricRow label="Entrega/cupom rateado">{brl(analise?.valorEntregaCupomRateado)}</MetricRow>
+                <MetricRow label="Custos iFood rateáveis">{brl(analise?.custosIfoodRateaveis)}</MetricRow>
+                <MetricRow label="Valor rateado no produto">{brl(analise?.valorCustosIfoodRateados)}</MetricRow>
+                <MetricRow label="Preço base com taxa">{brl(analise?.precoIfoodBaseTaxas)}</MetricRow>
                 <MetricRow label="Preço iFood final">
                   <span style={{ fontWeight: 600 }} className="clr-orange">
                     {analise?.precoIfood === null || analise?.precoIfood === undefined
@@ -1177,8 +1177,8 @@ function FichaModal({ produtoId, onClose, onChanged }) {
             <div className="alert alert-gray" style={{ marginTop: 8 }}>
               <div className="alert-msg">
                 Preço sugerido usa margem sobre ingredientes e soma custos embutidos sem overprice.
-                Preço iFood usa o preço de venda definido no produto e considera taxas, campanha,
-                entrega/cupom e ticket médio delivery.
+                Preço iFood usa o preço de venda definido no produto e considera taxa iFood,
+                campanha inteligente, entrega/cupom e ticket médio delivery.
               </div>
             </div>
 

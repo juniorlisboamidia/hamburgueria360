@@ -874,23 +874,23 @@ async function getConfigPrecificacao() {
 }
 
 // precoSugerido = custoComMargem / (cmvAlvo/100) + custoEmbutido (venda direta)
-// precoIfood = precoVenda / (1 - percentualIfoodTotal/100)
-//            + ((maiorTaxaEntrega + cupomDesconto) / ticketMedioDelivery) * precoVenda
+// precoIfood = precoVenda / (1 - taxaIfood/100)
+//            + ((campanhaInteligente + maiorTaxaEntrega + cupomDesconto) / ticketMedioDelivery) * precoVenda
 // O preço iFood usa o preço de venda REAL do produto, não o sugerido — o gestor
 // pode praticar preços estratégicos (isca, âncora, promocional) e o iFood
 // precisa ser calculado sobre a decisão real.
 function computePrecificacao(totals, precoVenda, config) {
   const round2 = (n) => Number(n.toFixed(2));
   const cmvAlvo = Number(config.cmvAlvoPercentual);
+  const lucroDesejado = Number(config.lucroDesejadoPercentual);
   const taxa = Number(config.taxaIfoodPercentual);
-  const pagamentoOnline = Number(config.taxaPagamentoOnlinePercentual);
-  const repasseAntecipado = Number(config.taxaRepasseAntecipadoPercentual);
-  const campanha = Number(config.campanhaIfoodPercentual);
+  const campanhaInteligente = Number(config.campanhaInteligente);
   const maiorTaxaEntrega = Number(config.maiorTaxaEntrega);
   const cupomDesconto = Number(config.cupomDesconto);
   const ticketMedioDelivery = Number(config.ticketMedioDelivery);
 
-  const percentualIfoodTotal = taxa + pagamentoOnline + repasseAntecipado + campanha;
+  const percentualIfoodTotal = taxa;
+  const custosIfoodRateaveis = campanhaInteligente + maiorTaxaEntrega + cupomDesconto;
 
   let precoSugerido = null;
   if (totals.custoComMargem > 0 && cmvAlvo > 0 && cmvAlvo < 100) {
@@ -898,33 +898,27 @@ function computePrecificacao(totals, precoVenda, config) {
   }
 
   let precoIfoodBaseTaxas = null;
-  let valorEntregaCupomRateado = null;
+  let valorCustosIfoodRateados = null;
   let precoIfood = null;
-  if (
-    precoVenda > 0 &&
-    percentualIfoodTotal >= 0 &&
-    percentualIfoodTotal < 100 &&
-    ticketMedioDelivery > 0
-  ) {
-    precoIfoodBaseTaxas = precoVenda / (1 - percentualIfoodTotal / 100);
-    valorEntregaCupomRateado =
-      ((maiorTaxaEntrega + cupomDesconto) / ticketMedioDelivery) * precoVenda;
-    precoIfood = precoIfoodBaseTaxas + valorEntregaCupomRateado;
+  if (precoVenda > 0 && taxa >= 0 && taxa < 100 && ticketMedioDelivery > 0) {
+    precoIfoodBaseTaxas = precoVenda / (1 - taxa / 100);
+    valorCustosIfoodRateados = (custosIfoodRateaveis / ticketMedioDelivery) * precoVenda;
+    precoIfood = precoIfoodBaseTaxas + valorCustosIfoodRateados;
   }
 
   return {
     cmvAlvoPercentual: round2(cmvAlvo),
+    lucroDesejadoPercentual: round2(lucroDesejado),
     taxaIfoodPercentual: round2(taxa),
-    taxaPagamentoOnlinePercentual: round2(pagamentoOnline),
-    taxaRepasseAntecipadoPercentual: round2(repasseAntecipado),
-    campanhaIfoodPercentual: round2(campanha),
+    campanhaInteligente: round2(campanhaInteligente),
     percentualIfoodTotal: round2(percentualIfoodTotal),
     maiorTaxaEntrega: round2(maiorTaxaEntrega),
     cupomDesconto: round2(cupomDesconto),
     ticketMedioDelivery: round2(ticketMedioDelivery),
+    custosIfoodRateaveis: round2(custosIfoodRateaveis),
     precoIfoodBaseTaxas: precoIfoodBaseTaxas === null ? null : round2(precoIfoodBaseTaxas),
-    valorEntregaCupomRateado:
-      valorEntregaCupomRateado === null ? null : round2(valorEntregaCupomRateado),
+    valorCustosIfoodRateados:
+      valorCustosIfoodRateados === null ? null : round2(valorCustosIfoodRateados),
     precoSugerido: precoSugerido === null ? null : round2(precoSugerido),
     precoIfood: precoIfood === null ? null : round2(precoIfood)
   };
@@ -945,15 +939,12 @@ app.put('/api/configuracao-precificacao', async (req, res) => {
     const config = await getConfigPrecificacao();
     const {
       cmvAlvoPercentual,
+      lucroDesejadoPercentual,
       taxaIfoodPercentual,
-      taxaPagamentoOnlinePercentual,
-      taxaRepasseAntecipadoPercentual,
-      campanhaIfoodPercentual,
+      campanhaInteligente,
       maiorTaxaEntrega,
       cupomDesconto,
-      ticketMedioDelivery,
-      custoFixoIfood,
-      produtosPorPedidoIfood
+      ticketMedioDelivery
     } = req.body ?? {};
 
     const data = {};
@@ -965,23 +956,31 @@ app.put('/api/configuracao-precificacao', async (req, res) => {
       }
       data.cmvAlvoPercentual = v;
     }
-
-    const percentuais = [
-      ['taxaIfoodPercentual', taxaIfoodPercentual],
-      ['taxaPagamentoOnlinePercentual', taxaPagamentoOnlinePercentual],
-      ['taxaRepasseAntecipadoPercentual', taxaRepasseAntecipadoPercentual],
-      ['campanhaIfoodPercentual', campanhaIfoodPercentual]
-    ];
-    for (const [campo, valor] of percentuais) {
-      if (valor !== undefined) {
-        const v = Number(valor);
-        if (isNaN(v) || v < 0) {
-          return res.status(400).json({ error: `${campo} deve ser maior ou igual a zero` });
-        }
-        data[campo] = v;
+    if (lucroDesejadoPercentual !== undefined) {
+      const v = Number(lucroDesejadoPercentual);
+      if (isNaN(v) || v < 0 || v >= 100) {
+        return res.status(400).json({
+          error: 'lucroDesejadoPercentual deve ser maior ou igual a 0 e menor que 100'
+        });
       }
+      data.lucroDesejadoPercentual = v;
     }
-
+    if (taxaIfoodPercentual !== undefined) {
+      const v = Number(taxaIfoodPercentual);
+      if (isNaN(v) || v < 0 || v >= 100) {
+        return res.status(400).json({
+          error: 'taxaIfoodPercentual deve ser maior ou igual a 0 e menor que 100'
+        });
+      }
+      data.taxaIfoodPercentual = v;
+    }
+    if (campanhaInteligente !== undefined) {
+      const v = Number(campanhaInteligente);
+      if (isNaN(v) || v < 0) {
+        return res.status(400).json({ error: 'campanhaInteligente deve ser maior ou igual a zero' });
+      }
+      data.campanhaInteligente = v;
+    }
     if (maiorTaxaEntrega !== undefined) {
       const v = Number(maiorTaxaEntrega);
       if (isNaN(v) || v < 0) {
@@ -1002,36 +1001,6 @@ app.put('/api/configuracao-precificacao', async (req, res) => {
         return res.status(400).json({ error: 'ticketMedioDelivery deve ser maior que zero' });
       }
       data.ticketMedioDelivery = v;
-    }
-
-    // Legado V1 (sem uso na fórmula atual, mantidos por compatibilidade)
-    if (custoFixoIfood !== undefined) {
-      const v = Number(custoFixoIfood);
-      if (isNaN(v) || v < 0) {
-        return res.status(400).json({ error: 'custoFixoIfood deve ser maior ou igual a zero' });
-      }
-      data.custoFixoIfood = v;
-    }
-    if (produtosPorPedidoIfood !== undefined) {
-      const v = Number(produtosPorPedidoIfood);
-      if (isNaN(v) || v <= 0) {
-        return res.status(400).json({ error: 'produtosPorPedidoIfood deve ser maior que zero' });
-      }
-      data.produtosPorPedidoIfood = v;
-    }
-
-    const pctFinal = (campo) =>
-      data[campo] !== undefined ? data[campo] : Number(config[campo]);
-    const percentualTotalFinal =
-      pctFinal('taxaIfoodPercentual') +
-      pctFinal('taxaPagamentoOnlinePercentual') +
-      pctFinal('taxaRepasseAntecipadoPercentual') +
-      pctFinal('campanhaIfoodPercentual');
-    if (percentualTotalFinal >= 100) {
-      return res.status(400).json({
-        error:
-          'A soma de taxaIfoodPercentual, taxaPagamentoOnlinePercentual, taxaRepasseAntecipadoPercentual e campanhaIfoodPercentual deve ser menor que 100'
-      });
     }
 
     const updated = await prisma.configuracaoPrecificacao.update({
@@ -1084,7 +1053,7 @@ app.get('/api/produtos/:id/analise', async (req, res) => {
       let mensagemSemFicha = 'Cadastre a ficha técnica para calcular o preço sugerido.';
       if (precificacaoVazia.precoIfood !== null) {
         mensagemSemFicha +=
-          ' Preço iFood calculado com base no preço de venda definido, considerando taxas, campanha, entrega/cupom e ticket médio delivery.';
+          ' Preço iFood usa o preço de venda definido no produto e considera taxa iFood, campanha inteligente, entrega/cupom e ticket médio delivery.';
       } else {
         mensagemSemFicha +=
           ' Defina um preço de venda válido e uma configuração iFood válida para calcular o preço iFood.';
@@ -1175,7 +1144,7 @@ app.get('/api/produtos/:id/analise', async (req, res) => {
     }
     if (precificacao.precoIfood !== null) {
       mensagemPrecificacao +=
-        ' Preço iFood calculado com base no preço de venda definido, considerando taxas, campanha, entrega/cupom e ticket médio delivery.';
+        ' Preço iFood usa o preço de venda definido no produto e considera taxa iFood, campanha inteligente, entrega/cupom e ticket médio delivery.';
     } else {
       mensagemPrecificacao +=
         ' Defina um preço de venda válido e uma configuração iFood válida para calcular o preço iFood.';
