@@ -22,6 +22,16 @@ app.get('/api/health', (req, res) => {
 
 // ===== Insumos =====
 
+const TIPOS_INSUMO = [
+  'INGREDIENTE',
+  'PRODUCAO_PROPRIA',
+  'BEBIDA',
+  'HORTIFRUTI',
+  'EMBALAGEM',
+  'ACOMPANHAMENTO',
+  'OPERACIONAL'
+];
+
 app.get('/api/insumos', async (req, res) => {
   try {
     const insumos = await prisma.insumo.findMany({
@@ -37,7 +47,7 @@ app.get('/api/insumos', async (req, res) => {
 
 app.post('/api/insumos', async (req, res) => {
   try {
-    const { nome, unidade, custoUnitario, fornecedor } = req.body ?? {};
+    const { nome, unidade, custoUnitario, fornecedor, tipo } = req.body ?? {};
 
     if (typeof nome !== 'string' || nome.trim() === '') {
       return res.status(400).json({ error: 'nome é obrigatório' });
@@ -51,10 +61,16 @@ app.post('/api/insumos', async (req, res) => {
     if (Number(custoUnitario) < 0) {
       return res.status(400).json({ error: 'custoUnitario deve ser maior ou igual a zero' });
     }
+    if (tipo !== undefined && tipo !== null && !TIPOS_INSUMO.includes(tipo)) {
+      return res.status(400).json({
+        error: `tipo inválido. Tipos permitidos: ${TIPOS_INSUMO.join(', ')}`
+      });
+    }
 
     const insumo = await prisma.insumo.create({
       data: {
         nome: nome.trim(),
+        tipo: tipo ?? 'INGREDIENTE',
         unidade: unidade.trim(),
         custoUnitario: Number(custoUnitario),
         fornecedor: fornecedor ? String(fornecedor).trim() : null,
@@ -81,7 +97,7 @@ app.put('/api/insumos/:id', async (req, res) => {
       return res.status(404).json({ error: 'Insumo não encontrado' });
     }
 
-    const { nome, unidade, custoUnitario, fornecedor, ativo } = req.body ?? {};
+    const { nome, unidade, custoUnitario, fornecedor, ativo, tipo } = req.body ?? {};
     const data = {};
 
     if (nome !== undefined) {
@@ -89,6 +105,14 @@ app.put('/api/insumos/:id', async (req, res) => {
         return res.status(400).json({ error: 'nome inválido' });
       }
       data.nome = nome.trim();
+    }
+    if (tipo !== undefined) {
+      if (!TIPOS_INSUMO.includes(tipo)) {
+        return res.status(400).json({
+          error: `tipo inválido. Tipos permitidos: ${TIPOS_INSUMO.join(', ')}`
+        });
+      }
+      data.tipo = tipo;
     }
     if (unidade !== undefined) {
       if (typeof unidade !== 'string' || unidade.trim() === '') {

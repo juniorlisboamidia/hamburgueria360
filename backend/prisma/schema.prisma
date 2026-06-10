@@ -13,20 +13,32 @@ datasource db {
 // ============================================================
 // Insumos (matérias-primas)
 // ============================================================
+enum TipoInsumo {
+  INGREDIENTE
+  PRODUCAO_PROPRIA
+  BEBIDA
+  HORTIFRUTI
+  EMBALAGEM
+  ACOMPANHAMENTO
+  OPERACIONAL
+}
+
 model Insumo {
-  id             Int      @id @default(autoincrement())
+  id             Int        @id @default(autoincrement())
   nome           String
+  tipo           TipoInsumo @default(INGREDIENTE)
   unidade        String
-  custoUnitario  Decimal  @db.Decimal(12, 4)
+  custoUnitario  Decimal    @db.Decimal(12, 4)
   fornecedor     String?
-  ativo          Boolean  @default(true)
-  criadoEm       DateTime @default(now())
-  atualizadoEm   DateTime @updatedAt
+  ativo          Boolean    @default(true)
+  criadoEm       DateTime   @default(now())
+  atualizadoEm   DateTime   @updatedAt
 
   fichaTecnicaItens FichaTecnicaItem[]
 
   @@index([nome])
   @@index([ativo])
+  @@index([tipo])
 }
 
 // ============================================================

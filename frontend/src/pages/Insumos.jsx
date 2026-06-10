@@ -12,10 +12,35 @@ function brl(value) {
   return brlFormatter.format(Number(value))
 }
 
-const FORM_BLANK = { nome: '', unidade: '', custoUnitario: '', fornecedor: '' }
+const TIPOS = [
+  { value: 'INGREDIENTE',      label: 'Ingrediente',      filtro: 'Ingredientes',     badge: 'badge-orange' },
+  { value: 'PRODUCAO_PROPRIA', label: 'Produção própria', filtro: 'Produção própria', badge: 'badge-blue' },
+  { value: 'BEBIDA',           label: 'Bebida',           filtro: 'Bebidas',          badge: 'badge-yellow' },
+  { value: 'HORTIFRUTI',       label: 'Hortifruti',       filtro: 'Hortifruti',       badge: 'badge-green' },
+  { value: 'EMBALAGEM',        label: 'Embalagem',        filtro: 'Embalagens',       badge: 'badge-gray' },
+  { value: 'ACOMPANHAMENTO',   label: 'Acompanhamento',   filtro: 'Acompanhamentos',  badge: 'badge-red' },
+  { value: 'OPERACIONAL',      label: 'Operacional',      filtro: 'Operacional',      badge: 'badge-gray' }
+]
+const TIPO_BY_VALUE = Object.fromEntries(TIPOS.map((t) => [t.value, t]))
 
-function validateForm({ nome, unidade, custoUnitario }) {
+function tipoLabel(value) {
+  return TIPO_BY_VALUE[value]?.label ?? value ?? '—'
+}
+function tipoBadge(value) {
+  return TIPO_BY_VALUE[value]?.badge ?? 'badge-gray'
+}
+
+const FORM_BLANK = {
+  nome: '',
+  tipo: 'INGREDIENTE',
+  unidade: '',
+  custoUnitario: '',
+  fornecedor: ''
+}
+
+function validateForm({ nome, unidade, custoUnitario, tipo }) {
   if (!nome || !nome.trim()) return 'nome é obrigatório'
+  if (!tipo) return 'tipo é obrigatório'
   if (!unidade || !unidade.trim()) return 'unidade é obrigatória'
   const c = Number(custoUnitario)
   if (custoUnitario === '' || !Number.isFinite(c)) {
@@ -28,29 +53,28 @@ function validateForm({ nome, unidade, custoUnitario }) {
 function payloadFromForm(form) {
   return {
     nome: form.nome.trim(),
+    tipo: form.tipo,
     unidade: form.unidade.trim(),
     custoUnitario: Number(form.custoUnitario),
     fornecedor: form.fornecedor.trim() === '' ? null : form.fornecedor.trim()
   }
 }
 
-const fieldStyle = { marginBottom: 0 }
-const cellInputStyle = { padding: '6px 10px', fontSize: 13 }
-
 export default function Insumos() {
   const [insumos, setInsumos] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [search, setSearch] = useState('')
+  const [filtroTipo, setFiltroTipo] = useState('TODOS')
+  const [feedback, setFeedback] = useState(null)
 
-  const [newForm, setNewForm] = useState(FORM_BLANK)
-  const [newError, setNewError] = useState(null)
-  const [newSubmitting, setNewSubmitting] = useState(false)
-
+  const [modalOpen, setModalOpen] = useState(false)
   const [editingId, setEditingId] = useState(null)
-  const [editForm, setEditForm] = useState(FORM_BLANK)
-  const [editError, setEditError] = useState(null)
-  const [editSubmitting, setEditSubmitting] = useState(false)
+  const [form, setForm] = useState(FORM_BLANK)
+  const [formError, setFormError] = useState(null)
+  const [submitting, setSubmitting] = useState(false)
+
+  const [deletingId, setDeletingId] = useState(null)
 
   function load() {
     setLoading(true)
@@ -71,92 +95,103 @@ export default function Insumos() {
 
   useEffect(() => { load() }, [])
 
-  function handleCreate(e) {
-    e.preventDefault()
-    const err = validateForm(newForm)
-    if (err) { setNewError(err); return }
-    setNewError(null)
-    setNewSubmitting(true)
-    api
-      .post('/insumos', payloadFromForm(newForm))
-      .then(() => {
-        setNewForm(FORM_BLANK)
-        return load()
-      })
-      .catch((e) =>
-        setNewError(e?.response?.data?.error ?? e?.message ?? 'Erro ao cadastrar.')
-      )
-      .finally(() => setNewSubmitting(false))
+  function openCreate() {
+    setEditingId(null)
+    setForm(FORM_BLANK)
+    setFormError(null)
+    setFeedback(null)
+    setModalOpen(true)
   }
 
-  function startEdit(insumo) {
+  function openEdit(insumo) {
     setEditingId(insumo.id)
-    setEditForm({
-      nome: insumo.nome,
-      unidade: insumo.unidade,
-      custoUnitario: String(Number(insumo.custoUnitario)),
+    setForm({
+      nome: insumo.nome ?? '',
+      tipo: insumo.tipo ?? 'INGREDIENTE',
+      unidade: insumo.unidade ?? '',
+      custoUnitario:
+        insumo.custoUnitario === null || insumo.custoUnitario === undefined
+          ? ''
+          : String(Number(insumo.custoUnitario)),
       fornecedor: insumo.fornecedor ?? ''
     })
-    setEditError(null)
+    setFormError(null)
+    setFeedback(null)
+    setModalOpen(true)
   }
-  function cancelEdit() {
+
+  function closeModal() {
+    setModalOpen(false)
     setEditingId(null)
-    setEditForm(FORM_BLANK)
-    setEditError(null)
+    setForm(FORM_BLANK)
+    setFormError(null)
   }
-  function saveEdit() {
-    const err = validateForm(editForm)
-    if (err) { setEditError(err); return }
-    setEditError(null)
-    setEditSubmitting(true)
-    api
-      .put(`/insumos/${editingId}`, payloadFromForm(editForm))
+
+  function handleSubmit(e) {
+    e.preventDefault()
+    const err = validateForm(form)
+    if (err) { setFormError(err); return }
+    setFormError(null)
+    setSubmitting(true)
+
+    const request = editingId === null
+      ? api.post('/insumos', payloadFromForm(form))
+      : api.put(`/insumos/${editingId}`, payloadFromForm(form))
+
+    request
       .then(() => {
-        cancelEdit()
-        return load()
+        setFeedback(editingId === null
+          ? 'Insumo criado com sucesso.'
+          : 'Insumo atualizado com sucesso.')
+        closeModal()
+        load()
       })
       .catch((e) =>
-        setEditError(e?.response?.data?.error ?? e?.message ?? 'Erro ao salvar.')
+        setFormError(e?.response?.data?.error ?? e?.message ?? 'Erro ao salvar insumo.')
       )
-      .finally(() => setEditSubmitting(false))
+      .finally(() => setSubmitting(false))
   }
 
   function handleDelete(insumo) {
     const ok = window.confirm(
-      `Desativar o insumo "${insumo.nome}"? Ele não aparecerá mais nas fichas técnicas, mas o histórico será preservado.`
+      `Inativar o insumo "${insumo.nome}"? Ele não aparecerá mais nas fichas técnicas, mas o histórico será preservado.`
     )
     if (!ok) return
+    setDeletingId(insumo.id)
+    setFeedback(null)
     api
       .delete(`/insumos/${insumo.id}`)
-      .then(load)
+      .then(() => {
+        setFeedback(`Insumo "${insumo.nome}" inativado.`)
+        load()
+      })
       .catch((e) =>
-        window.alert(e?.response?.data?.error ?? e?.message ?? 'Erro ao desativar.')
+        window.alert(e?.response?.data?.error ?? e?.message ?? 'Erro ao inativar.')
       )
+      .finally(() => setDeletingId(null))
   }
 
   const filtered = useMemo(() => {
+    let rows = insumos
+    if (filtroTipo !== 'TODOS') {
+      rows = rows.filter((i) => i.tipo === filtroTipo)
+    }
     const q = search.trim().toLowerCase()
-    if (!q) return insumos
-    return insumos.filter(
-      (i) =>
-        i.nome.toLowerCase().includes(q) ||
-        (i.fornecedor && i.fornecedor.toLowerCase().includes(q))
-    )
-  }, [insumos, search])
+    if (q) {
+      rows = rows.filter(
+        (i) =>
+          i.nome.toLowerCase().includes(q) ||
+          (i.fornecedor && i.fornecedor.toLowerCase().includes(q))
+      )
+    }
+    return rows
+  }, [insumos, search, filtroTipo])
 
   const total = insumos.length
-  const custoMedio =
-    total === 0
-      ? 0
-      : insumos.reduce((s, i) => s + Number(i.custoUnitario), 0) / total
-  const maisCaro =
-    total === 0
-      ? null
-      : insumos.reduce(
-          (m, i) => (Number(i.custoUnitario) > Number(m.custoUnitario) ? i : m),
-          insumos[0]
-        )
-  const unidades = new Set(insumos.map((i) => i.unidade)).size
+  const countTipo = (t) => insumos.filter((i) => i.tipo === t).length
+  const totalIngredientes = countTipo('INGREDIENTE')
+  const totalProducaoPropria = countTipo('PRODUCAO_PROPRIA')
+  const totalEmbAcomp = countTipo('EMBALAGEM') + countTipo('ACOMPANHAMENTO')
 
   if (loading) return <div className="loading-state">Carregando insumos…</div>
   if (error) {
@@ -175,78 +210,139 @@ export default function Insumos() {
 
   return (
     <div>
-      <div className="section-title">Resumo</div>
-      <div className="grid-4">
-        <Card title="Total Ativos" value={total} hint="Insumos cadastrados" variant="info" />
-        <Card title="Custo Médio" value={brl(custoMedio)} hint="Por unidade" variant="brand" />
-        <Card
-          title="Insumo Mais Caro"
-          value={maisCaro ? brl(maisCaro.custoUnitario) : '—'}
-          hint={maisCaro ? maisCaro.nome : 'Sem dados'}
-          variant="danger"
-        />
-        <Card title="Unidades" value={unidades} hint="Tipos cadastrados" />
+      <div className="page-header">
+        <div>
+          <h1>Insumos</h1>
+          <div className="page-header-sub">
+            Cadastre ingredientes, embalagens, acompanhamentos, bebidas, hortifruti e produções próprias.
+          </div>
+        </div>
+        <button type="button" className="btn btn-primary" onClick={openCreate}>
+          + Novo insumo
+        </button>
       </div>
 
-      <div className="section-title">Novo Insumo</div>
-      <div className="card">
-        <form onSubmit={handleCreate}>
-          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-            <div className="form-group" style={{ ...fieldStyle, flex: 2, minWidth: 180 }}>
-              <label className="form-label">Nome</label>
-              <input
-                className="form-input"
-                type="text"
-                value={newForm.nome}
-                onChange={(e) => setNewForm({ ...newForm, nome: e.target.value })}
-                placeholder="Ex.: Pão Brioche"
-              />
+      {feedback && (
+        <div className="alert alert-green" style={{ marginBottom: 12 }}>
+          <div className="alert-msg clr-green">{feedback}</div>
+        </div>
+      )}
+
+      {modalOpen && (
+        <div className="modal-overlay">
+          <div className="modal">
+            <div className="modal-title">
+              {editingId === null ? 'Novo insumo' : 'Editar insumo'}
             </div>
-            <div className="form-group" style={{ ...fieldStyle, flex: 1, minWidth: 100 }}>
-              <label className="form-label">Unidade</label>
-              <input
-                className="form-input"
-                type="text"
-                value={newForm.unidade}
-                onChange={(e) => setNewForm({ ...newForm, unidade: e.target.value })}
-                placeholder="un, kg, g..."
-              />
-            </div>
-            <div className="form-group" style={{ ...fieldStyle, flex: 1, minWidth: 120 }}>
-              <label className="form-label">Custo unitário</label>
-              <input
-                className="form-input"
-                type="number"
-                min="0"
-                step="0.0001"
-                value={newForm.custoUnitario}
-                onChange={(e) => setNewForm({ ...newForm, custoUnitario: e.target.value })}
-                placeholder="0,00"
-              />
-            </div>
-            <div className="form-group" style={{ ...fieldStyle, flex: 1.5, minWidth: 150 }}>
-              <label className="form-label">Fornecedor (opcional)</label>
-              <input
-                className="form-input"
-                type="text"
-                value={newForm.fornecedor}
-                onChange={(e) => setNewForm({ ...newForm, fornecedor: e.target.value })}
-                placeholder="Padaria Central"
-              />
-            </div>
-            <button type="submit" className="btn btn-primary" disabled={newSubmitting}>
-              {newSubmitting ? 'Adicionando…' : 'Adicionar'}
-            </button>
+            <form onSubmit={handleSubmit}>
+              <div className="form-group" style={{ marginBottom: 12 }}>
+                <label className="form-label">Nome</label>
+                <input
+                  className="form-input"
+                  type="text"
+                  value={form.nome}
+                  onChange={(e) => setForm({ ...form, nome: e.target.value })}
+                  placeholder="Ex.: Pão Brioche"
+                  autoFocus
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: 12 }}>
+                <label className="form-label">Tipo</label>
+                <select
+                  className="form-input"
+                  value={form.tipo}
+                  onChange={(e) => setForm({ ...form, tipo: e.target.value })}
+                >
+                  {TIPOS.map((t) => (
+                    <option key={t.value} value={t.value}>{t.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ display: 'flex', gap: 12 }}>
+                <div className="form-group" style={{ marginBottom: 12, flex: 1 }}>
+                  <label className="form-label">Unidade</label>
+                  <input
+                    className="form-input"
+                    type="text"
+                    value={form.unidade}
+                    onChange={(e) => setForm({ ...form, unidade: e.target.value })}
+                    placeholder="un, kg, g..."
+                  />
+                </div>
+                <div className="form-group" style={{ marginBottom: 12, flex: 1 }}>
+                  <label className="form-label">Custo unitário (R$)</label>
+                  <input
+                    className="form-input"
+                    type="number"
+                    min="0"
+                    step="0.0001"
+                    value={form.custoUnitario}
+                    onChange={(e) => setForm({ ...form, custoUnitario: e.target.value })}
+                    placeholder="0,00"
+                  />
+                </div>
+              </div>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Fornecedor (opcional)</label>
+                <input
+                  className="form-input"
+                  type="text"
+                  value={form.fornecedor}
+                  onChange={(e) => setForm({ ...form, fornecedor: e.target.value })}
+                  placeholder="Padaria Central"
+                />
+              </div>
+              {formError && (
+                <div className="alert alert-red" style={{ marginTop: 12, marginBottom: 0 }}>
+                  <div className="alert-msg clr-red">{formError}</div>
+                </div>
+              )}
+              <div className="modal-actions">
+                <button type="button" className="btn btn-secondary" onClick={closeModal} disabled={submitting}>
+                  Cancelar
+                </button>
+                <button type="submit" className="btn btn-primary" disabled={submitting}>
+                  {submitting ? 'Salvando…' : 'Salvar insumo'}
+                </button>
+              </div>
+            </form>
           </div>
-          {newError && (
-            <div className="alert alert-red" style={{ marginTop: 12 }}>
-              <div className="alert-msg clr-red">{newError}</div>
-            </div>
-          )}
-        </form>
+        </div>
+      )}
+
+      <div className="section-title">Resumo</div>
+      <div className="grid-4">
+        <Card title="Total de Insumos" value={total} hint="Ativos na base" variant="info" />
+        <Card title="Ingredientes" value={totalIngredientes} hint="Base das fichas técnicas" variant="brand" />
+        <Card title="Produção Própria" value={totalProducaoPropria} hint="Receita completa em breve" variant="info" />
+        <Card
+          title="Embalagens / Acompanhamentos"
+          value={totalEmbAcomp}
+          hint="Custos por pedido"
+        />
       </div>
 
       <div className="section-title">Insumos Cadastrados</div>
+
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
+        <button
+          type="button"
+          className={'btn ' + (filtroTipo === 'TODOS' ? 'btn-primary' : 'btn-secondary')}
+          onClick={() => setFiltroTipo('TODOS')}
+        >
+          Todos
+        </button>
+        {TIPOS.map((t) => (
+          <button
+            key={t.value}
+            type="button"
+            className={'btn ' + (filtroTipo === t.value ? 'btn-primary' : 'btn-secondary')}
+            onClick={() => setFiltroTipo(t.value)}
+          >
+            {t.filtro}
+          </button>
+        ))}
+      </div>
 
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 12 }}>
         <input
@@ -258,7 +354,7 @@ export default function Insumos() {
           style={{ flex: 1 }}
         />
         <span style={{ fontSize: 12, color: '#aaa', whiteSpace: 'nowrap' }}>
-          {search.trim() === ''
+          {filtered.length === total
             ? `${total} insumo${total === 1 ? '' : 's'}`
             : `${filtered.length} de ${total}`}
         </span>
@@ -266,11 +362,14 @@ export default function Insumos() {
 
       {total === 0 ? (
         <div className="empty-state">
-          Nenhum insumo cadastrado. Use o formulário acima para cadastrar o primeiro.
+          Nenhum insumo cadastrado. Use o botão “+ Novo insumo” para cadastrar o primeiro.
         </div>
       ) : filtered.length === 0 ? (
         <div className="empty-state">
-          Nenhum insumo encontrado para "{search}". Ajuste a busca ou limpe o campo.
+          Nenhum insumo encontrado
+          {filtroTipo !== 'TODOS' ? ` no tipo "${TIPO_BY_VALUE[filtroTipo]?.filtro ?? filtroTipo}"` : ''}
+          {search.trim() !== '' ? ` para "${search}"` : ''}.
+          Ajuste os filtros ou a busca.
         </div>
       ) : (
         <div className="table-card">
@@ -278,6 +377,7 @@ export default function Insumos() {
             <thead>
               <tr>
                 <th>Nome</th>
+                <th>Tipo</th>
                 <th>Unidade</th>
                 <th>Custo unitário</th>
                 <th>Fornecedor</th>
@@ -285,90 +385,36 @@ export default function Insumos() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((i) => {
-                const isEditing = editingId === i.id
-                if (isEditing) {
-                  return (
-                    <tr key={i.id} style={{ background: '#fff7ed' }}>
-                      <td>
-                        <input
-                          className="form-input"
-                          style={cellInputStyle}
-                          value={editForm.nome}
-                          onChange={(e) => setEditForm({ ...editForm, nome: e.target.value })}
-                          autoFocus
-                        />
-                      </td>
-                      <td>
-                        <input
-                          className="form-input"
-                          style={cellInputStyle}
-                          value={editForm.unidade}
-                          onChange={(e) => setEditForm({ ...editForm, unidade: e.target.value })}
-                        />
-                      </td>
-                      <td>
-                        <input
-                          className="form-input"
-                          style={cellInputStyle}
-                          type="number"
-                          min="0"
-                          step="0.0001"
-                          value={editForm.custoUnitario}
-                          onChange={(e) => setEditForm({ ...editForm, custoUnitario: e.target.value })}
-                        />
-                      </td>
-                      <td>
-                        <input
-                          className="form-input"
-                          style={cellInputStyle}
-                          value={editForm.fornecedor}
-                          onChange={(e) => setEditForm({ ...editForm, fornecedor: e.target.value })}
-                          placeholder="(opcional)"
-                        />
-                      </td>
-                      <td style={{ textAlign: 'right' }}>
-                        <div style={{ display: 'inline-flex', gap: 6 }}>
-                          <button type="button" className="btn btn-primary" onClick={saveEdit} disabled={editSubmitting}>
-                            {editSubmitting ? 'Salvando…' : 'Salvar'}
-                          </button>
-                          <button type="button" className="btn btn-secondary" onClick={cancelEdit} disabled={editSubmitting}>
-                            Cancelar
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  )
-                }
-                return (
-                  <tr key={i.id}>
-                    <td style={{ fontWeight: 500, color: '#111' }}>{i.nome}</td>
-                    <td>{i.unidade}</td>
-                    <td>{brl(i.custoUnitario)}</td>
-                    <td className={i.fornecedor ? '' : 'clr-muted'}>
-                      {i.fornecedor || 'Sem fornecedor'}
-                    </td>
-                    <td style={{ textAlign: 'right' }}>
-                      <div style={{ display: 'inline-flex', gap: 6 }}>
-                        <button type="button" className="btn btn-secondary" onClick={() => startEdit(i)}>
-                          Editar
-                        </button>
-                        <button type="button" className="btn btn-danger" onClick={() => handleDelete(i)}>
-                          Desativar
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                )
-              })}
+              {filtered.map((i) => (
+                <tr key={i.id}>
+                  <td style={{ fontWeight: 500, color: '#111' }}>{i.nome}</td>
+                  <td>
+                    <span className={'badge ' + tipoBadge(i.tipo)}>{tipoLabel(i.tipo)}</span>
+                  </td>
+                  <td>{i.unidade}</td>
+                  <td>{brl(i.custoUnitario)}</td>
+                  <td className={i.fornecedor ? '' : 'clr-muted'}>
+                    {i.fornecedor || 'Sem fornecedor'}
+                  </td>
+                  <td style={{ textAlign: 'right' }}>
+                    <div style={{ display: 'inline-flex', gap: 6 }}>
+                      <button type="button" className="btn btn-secondary" onClick={() => openEdit(i)}>
+                        Editar
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-danger"
+                        onClick={() => handleDelete(i)}
+                        disabled={deletingId === i.id}
+                      >
+                        {deletingId === i.id ? 'Inativando…' : 'Inativar'}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
-        </div>
-      )}
-
-      {editError && (
-        <div className="alert alert-red" style={{ marginTop: 10 }}>
-          <div className="alert-msg clr-red">{editError}</div>
         </div>
       )}
     </div>
