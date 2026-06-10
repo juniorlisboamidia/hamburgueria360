@@ -401,10 +401,14 @@ export default function Produtos() {
                       : <span className={lucroPositivo ? 'clr-green' : 'clr-red'}>{brl(a.lucroBruto)}</span>}
                   </MetricRow>
                   <MetricRow label="Preço sugerido">
-                    <span className="badge badge-gray">Em breve</span>
+                    {a.precoSugerido === null || a.precoSugerido === undefined
+                      ? <span className="badge badge-gray">{semFichaProduto ? 'Sem ficha' : 'Pendente'}</span>
+                      : <span style={{ fontWeight: 600 }} className="clr-blue">{brl(a.precoSugerido)}</span>}
                   </MetricRow>
                   <MetricRow label="Preço iFood">
-                    <span className="badge badge-gray">Em breve</span>
+                    {a.precoIfood === null || a.precoIfood === undefined
+                      ? <span className="badge badge-gray">{semFichaProduto ? 'Sem ficha' : 'Pendente'}</span>
+                      : <span style={{ fontWeight: 600 }} className="clr-orange">{brl(a.precoIfood)}</span>}
                   </MetricRow>
                 </div>
 
@@ -839,8 +843,22 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                 hint="Preço − custo da ficha"
                 variant={analise?.lucroBruto !== null && Number(analise?.lucroBruto) > 0 ? 'success' : 'info'}
               />
-              <Card title="Preço Sugerido" value="Em breve" hint="Cálculo em desenvolvimento" variant="info" />
-              <Card title="Preço iFood" value="Em breve" hint="Cálculo em desenvolvimento" variant="info" />
+              <Card
+                title="Preço Sugerido"
+                value={analise?.precoSugerido === null || analise?.precoSugerido === undefined
+                  ? 'Pendente'
+                  : brl(analise.precoSugerido)}
+                hint="Venda direta (margem alvo)"
+                variant="info"
+              />
+              <Card
+                title="Preço iFood"
+                value={analise?.precoIfood === null || analise?.precoIfood === undefined
+                  ? 'Pendente'
+                  : brl(analise.precoIfood)}
+                hint="Com taxa, campanha e custo fixo"
+                variant="brand"
+              />
             </div>
             <div className="grid-3" style={{ marginTop: 12 }}>
               <Card
@@ -866,6 +884,64 @@ function FichaModal({ produtoId, onClose, onChanged }) {
               <div className="alert-msg">
                 Embalagens, acompanhamentos e custos operacionais entram no custo real do produto,
                 mas podem ficar fora da base de margem para evitar overprice.
+              </div>
+            </div>
+
+            {/* Precificação técnica */}
+            <div className="section-title">Precificação Técnica</div>
+            <div className="grid-2">
+              <div className="card">
+                <div className="card-label">Venda Direta</div>
+                <MetricRow label="CMV alvo">{pct(analise?.cmvAlvoPercentual)}</MetricRow>
+                <MetricRow label="Custo com margem">{brl(analise?.custoComMargem)}</MetricRow>
+                <MetricRow label="Custos embutidos">{brl(analise?.custoEmbutido)}</MetricRow>
+                <MetricRow label="Preço sugerido">
+                  <span style={{ fontWeight: 600 }} className="clr-blue">
+                    {analise?.precoSugerido === null || analise?.precoSugerido === undefined
+                      ? 'Pendente'
+                      : brl(analise.precoSugerido)}
+                  </span>
+                </MetricRow>
+                <MetricRow label="Preço atual">{brl(analise?.precoVenda)}</MetricRow>
+                <MetricRow label="Diferença para sugerido">
+                  {analise?.diferencaPrecoSugerido === null || analise?.diferencaPrecoSugerido === undefined
+                    ? <span className="clr-muted">—</span>
+                    : (
+                      <span
+                        style={{ fontWeight: 600 }}
+                        className={Number(analise.diferencaPrecoSugerido) >= 0 ? 'clr-green' : 'clr-red'}
+                      >
+                        {brl(analise.diferencaPrecoSugerido)}
+                      </span>
+                    )}
+                </MetricRow>
+              </div>
+              <div className="card">
+                <div className="card-label">iFood</div>
+                <MetricRow label="Taxa iFood">{pct(analise?.taxaIfoodPercentual)}</MetricRow>
+                <MetricRow label="Campanha iFood">{pct(analise?.campanhaIfoodPercentual)}</MetricRow>
+                <MetricRow label="Percentual total">{pct(analise?.percentualIfoodTotal)}</MetricRow>
+                <MetricRow label="Custo fixo iFood">{brl(analise?.custoFixoIfood)}</MetricRow>
+                <MetricRow label="Produtos por pedido">{num(analise?.produtosPorPedidoIfood)}</MetricRow>
+                <MetricRow label="Custo fixo por produto">{brl(analise?.custoFixoIfoodPorProduto)}</MetricRow>
+                <MetricRow label="Preço iFood">
+                  <span style={{ fontWeight: 600 }} className="clr-orange">
+                    {analise?.precoIfood === null || analise?.precoIfood === undefined
+                      ? 'Pendente'
+                      : brl(analise.precoIfood)}
+                  </span>
+                </MetricRow>
+              </div>
+            </div>
+            {analise?.mensagemPrecificacao && (
+              <div className="alert alert-gray" style={{ marginTop: 12 }}>
+                <div className="alert-msg">{analise.mensagemPrecificacao}</div>
+              </div>
+            )}
+            <div className="alert alert-gray" style={{ marginTop: 8 }}>
+              <div className="alert-msg">
+                Preço sugerido usa margem sobre ingredientes e soma custos embutidos sem overprice.
+                Preço iFood considera taxa, campanha e custo fixo rateado por produto.
               </div>
             </div>
 

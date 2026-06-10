@@ -860,6 +860,146 @@ app.delete('/api/ficha-tecnica/itens/:id', async (req, res) => {
   }
 });
 
+// ===== Configuração de Precificação =====
+
+async function getConfigPrecificacao() {
+  let config = await prisma.configuracaoPrecificacao.findFirst({
+    where: { ativo: true },
+    orderBy: { id: 'asc' }
+  });
+  if (!config) {
+    config = await prisma.configuracaoPrecificacao.create({ data: {} });
+  }
+  return config;
+}
+
+// precoSugerido = custoComMargem / (cmvAlvo/100) + custoEmbutido
+// precoIfood = (precoSugerido + custoFixoRateado) / (1 - percentualIfoodTotal/100)
+function computePrecificacao(totals, config) {
+  const round2 = (n) => Number(n.toFixed(2));
+  const cmvAlvo = Number(config.cmvAlvoPercentual);
+  const taxa = Number(config.taxaIfoodPercentual);
+  const campanha = Number(config.campanhaIfoodPercentual);
+  const custoFixoIfood = Number(config.custoFixoIfood);
+  const produtosPorPedido = Number(config.produtosPorPedidoIfood);
+
+  const percentualIfoodTotal = taxa + campanha;
+  const custoFixoIfoodPorProduto =
+    produtosPorPedido > 0 ? custoFixoIfood / produtosPorPedido : null;
+
+  let precoSugerido = null;
+  if (totals.custoComMargem > 0 && cmvAlvo > 0 && cmvAlvo < 100) {
+    precoSugerido = totals.custoComMargem / (cmvAlvo / 100) + totals.custoEmbutido;
+  }
+
+  let precoIfood = null;
+  if (
+    precoSugerido !== null &&
+    percentualIfoodTotal >= 0 &&
+    percentualIfoodTotal < 100 &&
+    custoFixoIfoodPorProduto !== null
+  ) {
+    precoIfood = (precoSugerido + custoFixoIfoodPorProduto) / (1 - percentualIfoodTotal / 100);
+  }
+
+  return {
+    cmvAlvoPercentual: round2(cmvAlvo),
+    taxaIfoodPercentual: round2(taxa),
+    campanhaIfoodPercentual: round2(campanha),
+    percentualIfoodTotal: round2(percentualIfoodTotal),
+    custoFixoIfood: round2(custoFixoIfood),
+    produtosPorPedidoIfood: round2(produtosPorPedido),
+    custoFixoIfoodPorProduto:
+      custoFixoIfoodPorProduto === null ? null : round2(custoFixoIfoodPorProduto),
+    precoSugerido: precoSugerido === null ? null : round2(precoSugerido),
+    precoIfood: precoIfood === null ? null : round2(precoIfood)
+  };
+}
+
+app.get('/api/configuracao-precificacao', async (req, res) => {
+  try {
+    const config = await getConfigPrecificacao();
+    res.json(config);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro interno ao consultar configuração de precificação' });
+  }
+});
+
+app.put('/api/configuracao-precificacao', async (req, res) => {
+  try {
+    const config = await getConfigPrecificacao();
+    const {
+      cmvAlvoPercentual,
+      taxaIfoodPercentual,
+      campanhaIfoodPercentual,
+      custoFixoIfood,
+      produtosPorPedidoIfood
+    } = req.body ?? {};
+
+    const data = {};
+
+    if (cmvAlvoPercentual !== undefined) {
+      const v = Number(cmvAlvoPercentual);
+      if (isNaN(v) || v <= 0 || v >= 100) {
+        return res.status(400).json({ error: 'cmvAlvoPercentual deve ser maior que 0 e menor que 100' });
+      }
+      data.cmvAlvoPercentual = v;
+    }
+    if (taxaIfoodPercentual !== undefined) {
+      const v = Number(taxaIfoodPercentual);
+      if (isNaN(v) || v < 0) {
+        return res.status(400).json({ error: 'taxaIfoodPercentual deve ser maior ou igual a zero' });
+      }
+      data.taxaIfoodPercentual = v;
+    }
+    if (campanhaIfoodPercentual !== undefined) {
+      const v = Number(campanhaIfoodPercentual);
+      if (isNaN(v) || v < 0) {
+        return res.status(400).json({ error: 'campanhaIfoodPercentual deve ser maior ou igual a zero' });
+      }
+      data.campanhaIfoodPercentual = v;
+    }
+    if (custoFixoIfood !== undefined) {
+      const v = Number(custoFixoIfood);
+      if (isNaN(v) || v < 0) {
+        return res.status(400).json({ error: 'custoFixoIfood deve ser maior ou igual a zero' });
+      }
+      data.custoFixoIfood = v;
+    }
+    if (produtosPorPedidoIfood !== undefined) {
+      const v = Number(produtosPorPedidoIfood);
+      if (isNaN(v) || v <= 0) {
+        return res.status(400).json({ error: 'produtosPorPedidoIfood deve ser maior que zero' });
+      }
+      data.produtosPorPedidoIfood = v;
+    }
+
+    const taxaFinal =
+      data.taxaIfoodPercentual !== undefined
+        ? data.taxaIfoodPercentual
+        : Number(config.taxaIfoodPercentual);
+    const campanhaFinal =
+      data.campanhaIfoodPercentual !== undefined
+        ? data.campanhaIfoodPercentual
+        : Number(config.campanhaIfoodPercentual);
+    if (taxaFinal + campanhaFinal >= 100) {
+      return res.status(400).json({
+        error: 'A soma de taxaIfoodPercentual e campanhaIfoodPercentual deve ser menor que 100'
+      });
+    }
+
+    const updated = await prisma.configuracaoPrecificacao.update({
+      where: { id: config.id },
+      data
+    });
+    res.json(updated);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro interno ao atualizar configuração de precificação' });
+  }
+});
+
 // ===== Análise Financeira do Produto =====
 
 app.get('/api/produtos/:id/analise', async (req, res) => {
@@ -888,7 +1028,10 @@ app.get('/api/produtos/:id/analise', async (req, res) => {
       precoVenda: round2(precoVenda)
     };
 
+    const config = await getConfigPrecificacao();
+
     if (itens.length === 0) {
+      const precificacaoVazia = computePrecificacao({ custoComMargem: 0, custoEmbutido: 0 }, config);
       return res.json({
         produto: produtoOut,
         precoVenda: round2(precoVenda),
@@ -901,13 +1044,19 @@ app.get('/api/produtos/:id/analise', async (req, res) => {
         margemBrutaPercentual: null,
         statusCmv: 'SEM_FICHA',
         mensagemDiagnostico:
-          'Produto sem ficha técnica cadastrada. Cadastre os insumos para calcular CMV e margem real.'
+          'Produto sem ficha técnica cadastrada. Cadastre os insumos para calcular CMV e margem real.',
+        ...precificacaoVazia,
+        diferencaPrecoSugerido: null,
+        diferencaPrecoIfoodVsVenda: null,
+        mensagemPrecificacao:
+          'Cadastre a ficha técnica para calcular preço sugerido e preço iFood.'
       });
     }
 
     // Custo real considera rateio (POR_EMBALAGEM / POR_PEDIDO dividem pelo atendimento)
     const totals = computeFichaTotals(itens);
     const custoFichaTecnica = totals.custoTotalFicha;
+    const precificacao = computePrecificacao(totals, config);
 
     if (precoVenda === 0) {
       return res.json({
@@ -922,7 +1071,12 @@ app.get('/api/produtos/:id/analise', async (req, res) => {
         margemBrutaPercentual: null,
         statusCmv: 'SEM_PRECO',
         mensagemDiagnostico:
-          'Produto sem preço de venda válido para cálculo de CMV e margem.'
+          'Produto sem preço de venda válido para cálculo de CMV e margem.',
+        ...precificacao,
+        diferencaPrecoSugerido: null,
+        diferencaPrecoIfoodVsVenda: null,
+        mensagemPrecificacao:
+          'Defina o preço de venda para comparar com o preço sugerido.'
       });
     }
 
@@ -948,6 +1102,22 @@ app.get('/api/produtos/:id/analise', async (req, res) => {
         'CMV crítico. Produto pode estar comprometendo a margem da operação.';
     }
 
+    let mensagemPrecificacao;
+    if (precificacao.precoSugerido === null) {
+      mensagemPrecificacao =
+        'Não foi possível calcular o preço sugerido. Verifique a ficha técnica e a margem alvo.';
+    } else if (precoVenda < precificacao.precoSugerido) {
+      mensagemPrecificacao =
+        'Preço atual abaixo do preço técnico sugerido. Revise preço, ficha ou margem alvo.';
+    } else {
+      mensagemPrecificacao =
+        'Preço atual cobre o preço técnico sugerido para venda direta.';
+    }
+    if (precificacao.precoIfood !== null) {
+      mensagemPrecificacao +=
+        ' Para iFood, o preço técnico considera taxa, campanha e custo fixo rateado.';
+    }
+
     res.json({
       produto: produtoOut,
       precoVenda: round2(precoVenda),
@@ -959,7 +1129,17 @@ app.get('/api/produtos/:id/analise', async (req, res) => {
       cmvPercentual: round2(cmvPercentual),
       margemBrutaPercentual: round2(margemBrutaPercentual),
       statusCmv,
-      mensagemDiagnostico
+      mensagemDiagnostico,
+      ...precificacao,
+      diferencaPrecoSugerido:
+        precificacao.precoSugerido === null
+          ? null
+          : round2(precoVenda - precificacao.precoSugerido),
+      diferencaPrecoIfoodVsVenda:
+        precificacao.precoIfood === null
+          ? null
+          : round2(precificacao.precoIfood - precoVenda),
+      mensagemPrecificacao
     });
   } catch (err) {
     console.error(err);

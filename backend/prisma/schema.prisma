@@ -135,6 +135,23 @@ model FichaTecnicaItem {
 }
 
 // ============================================================
+// Configuração global de precificação
+// ============================================================
+model ConfiguracaoPrecificacao {
+  id                      Int      @id @default(autoincrement())
+  cmvAlvoPercentual       Decimal  @db.Decimal(10, 2) @default(32.00)
+  taxaIfoodPercentual     Decimal  @db.Decimal(10, 2) @default(23.00)
+  campanhaIfoodPercentual Decimal  @db.Decimal(10, 2) @default(10.00)
+  custoFixoIfood          Decimal  @db.Decimal(10, 2) @default(0.00)
+  produtosPorPedidoIfood  Decimal  @db.Decimal(10, 2) @default(2.00)
+  ativo                   Boolean  @default(true)
+  criadoEm                DateTime @default(now())
+  atualizadoEm            DateTime @updatedAt
+
+  @@index([ativo])
+}
+
+// ============================================================
 // Custos fixos (recorrentes mensais — sem mês de referência no MVP)
 // ============================================================
 model CustoFixo {
