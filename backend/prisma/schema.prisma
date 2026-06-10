@@ -101,13 +101,30 @@ model Produto {
 // ============================================================
 // Ficha técnica (composição produto x insumo)
 // ============================================================
+enum TipoUsoFicha {
+  INGREDIENTE
+  EMBALAGEM
+  ACOMPANHAMENTO
+  OPERACIONAL
+}
+
+enum FormaRateioFicha {
+  POR_PRODUTO
+  POR_EMBALAGEM
+  POR_PEDIDO
+}
+
 model FichaTecnicaItem {
-  id           Int      @id @default(autoincrement())
-  produtoId    Int
-  insumoId     Int
-  quantidade   Decimal  @db.Decimal(12, 4)
-  criadoEm     DateTime @default(now())
-  atualizadoEm DateTime @updatedAt
+  id                 Int              @id @default(autoincrement())
+  produtoId          Int
+  insumoId           Int
+  quantidade         Decimal          @db.Decimal(12, 4)
+  tipoUso            TipoUsoFicha     @default(INGREDIENTE)
+  formaRateio        FormaRateioFicha @default(POR_PRODUTO)
+  quantidadeAtendida Decimal?         @db.Decimal(10, 3)
+  aplicarMargem      Boolean          @default(true)
+  criadoEm           DateTime         @default(now())
+  atualizadoEm       DateTime         @updatedAt
 
   produto Produto @relation(fields: [produtoId], references: [id], onDelete: Cascade)
   insumo  Insumo  @relation(fields: [insumoId], references: [id], onDelete: Restrict)

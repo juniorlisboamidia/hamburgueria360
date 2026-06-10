@@ -442,12 +442,44 @@ export default function Produtos() {
 
 // ============ Modal grande: ficha do produto ============
 
+const TIPO_USO_OPTIONS = [
+  { value: 'INGREDIENTE',    label: 'Ingrediente' },
+  { value: 'EMBALAGEM',      label: 'Embalagem' },
+  { value: 'ACOMPANHAMENTO', label: 'Acompanhamento' },
+  { value: 'OPERACIONAL',    label: 'Operacional' }
+]
+const TIPO_USO_LABEL = Object.fromEntries(TIPO_USO_OPTIONS.map((o) => [o.value, o.label]))
+
+const RATEIO_OPTIONS = [
+  { value: 'POR_PRODUTO',   label: 'Por produto' },
+  { value: 'POR_EMBALAGEM', label: 'Por embalagem' },
+  { value: 'POR_PEDIDO',    label: 'Por pedido' }
+]
+const RATEIO_LABEL = Object.fromEntries(RATEIO_OPTIONS.map((o) => [o.value, o.label]))
+
+const ATENDIDA_LABEL = {
+  POR_EMBALAGEM: 'Produtos atendidos por embalagem',
+  POR_PEDIDO: 'Produtos médios por pedido'
+}
+
+// Sugestões de uso a partir do tipo do insumo (mesma regra do backend)
+function sugestaoUso(tipoInsumo) {
+  if (tipoInsumo === 'EMBALAGEM') return { tipoUso: 'EMBALAGEM', aplicarMargem: false }
+  if (tipoInsumo === 'ACOMPANHAMENTO') return { tipoUso: 'ACOMPANHAMENTO', aplicarMargem: false }
+  if (tipoInsumo === 'OPERACIONAL') return { tipoUso: 'OPERACIONAL', aplicarMargem: false }
+  return { tipoUso: 'INGREDIENTE', aplicarMargem: true }
+}
+
 function FichaModal({ produtoId, onClose, onChanged }) {
   const [produto, setProduto] = useState(null)
   const [analise, setAnalise] = useState(null)
   const [itens, setItens] = useState([])
   const [insumos, setInsumos] = useState([])
-  const [custoTotal, setCustoTotal] = useState(0)
+  const [fichaTotais, setFichaTotais] = useState({
+    custoComMargem: 0,
+    custoEmbutido: 0,
+    custoTotalFicha: 0
+  })
 
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -459,13 +491,29 @@ function FichaModal({ produtoId, onClose, onChanged }) {
 
   const [formInsumoId, setFormInsumoId] = useState('')
   const [formQty, setFormQty] = useState('')
+  const [formTipoUso, setFormTipoUso] = useState('INGREDIENTE')
+  const [formRateio, setFormRateio] = useState('POR_PRODUTO')
+  const [formAtendida, setFormAtendida] = useState('')
+  const [formMargem, setFormMargem] = useState(true)
   const [itemError, setItemError] = useState(null)
   const [itemSubmitting, setItemSubmitting] = useState(false)
 
   const [editingItemId, setEditingItemId] = useState(null)
-  const [editingQty, setEditingQty] = useState('')
+  const [editForm, setEditForm] = useState(null)
   const [editError, setEditError] = useState(null)
   const [editSubmitting, setEditSubmitting] = useState(false)
+
+  function applyFicha(fichaData) {
+    setProduto(fichaData.produto)
+    setItens(fichaData.itens)
+    setFichaTotais({
+      custoComMargem: fichaData.custoComMargem ?? 0,
+      custoEmbutido: fichaData.custoEmbutido ?? 0,
+      custoTotalFicha: fichaData.custoTotalFicha ?? 0
+    })
+  }
+
+  const custoTotal = fichaTotais.custoTotalFicha
 
   function loadAll() {
     setLoading(true)
@@ -477,9 +525,7 @@ function FichaModal({ produtoId, onClose, onChanged }) {
     ])
       .then(([fichaRes, analiseRes, insumosRes]) => {
         const prod = fichaRes.data.produto
-        setProduto(prod)
-        setItens(fichaRes.data.itens)
-        setCustoTotal(fichaRes.data.custoTotalFicha)
+        applyFicha(fichaRes.data)
         setAnalise(analiseRes.data)
         setInsumos(insumosRes.data)
         setDadosForm({
@@ -508,9 +554,7 @@ function FichaModal({ produtoId, onClose, onChanged }) {
       api.get(`/produtos/${produtoId}/ficha-tecnica`),
       api.get(`/produtos/${produtoId}/analise`)
     ]).then(([fichaRes, analiseRes]) => {
-      setProduto(fichaRes.data.produto)
-      setItens(fichaRes.data.itens)
-      setCustoTotal(fichaRes.data.custoTotalFicha)
+      applyFicha(fichaRes.data)
       setAnalise(analiseRes.data)
       return onChanged()
     })
@@ -534,6 +578,25 @@ function FichaModal({ produtoId, onClose, onChanged }) {
       .finally(() => setDadosSaving(false))
   }
 
+  function handleSelectInsumo(value) {
+    setFormInsumoId(value)
+    const ins = insumos.find((x) => String(x.id) === value)
+    if (ins) {
+      const sug = sugestaoUso(ins.tipo)
+      setFormTipoUso(sug.tipoUso)
+      setFormMargem(sug.aplicarMargem)
+    }
+  }
+
+  function resetItemForm() {
+    setFormInsumoId('')
+    setFormQty('')
+    setFormTipoUso('INGREDIENTE')
+    setFormRateio('POR_PRODUTO')
+    setFormAtendida('')
+    setFormMargem(true)
+  }
+
   function handleAddItem(e) {
     e.preventDefault()
     setItemError(null)
@@ -546,15 +609,25 @@ function FichaModal({ produtoId, onClose, onChanged }) {
       setItemError('Quantidade deve ser maior que zero.')
       return
     }
+    if (formRateio !== 'POR_PRODUTO') {
+      const qa = Number(formAtendida)
+      if (formAtendida === '' || !Number.isFinite(qa) || qa <= 0) {
+        setItemError(`${ATENDIDA_LABEL[formRateio]} é obrigatório e deve ser maior que zero.`)
+        return
+      }
+    }
     setItemSubmitting(true)
     api
       .post(`/produtos/${produtoId}/ficha-tecnica/itens`, {
         insumoId: Number(formInsumoId),
-        quantidade: q
+        quantidade: q,
+        tipoUso: formTipoUso,
+        formaRateio: formRateio,
+        quantidadeAtendida: formRateio === 'POR_PRODUTO' ? null : Number(formAtendida),
+        aplicarMargem: formMargem
       })
       .then(() => {
-        setFormInsumoId('')
-        setFormQty('')
+        resetItemForm()
         return reload()
       })
       .catch((err) => {
@@ -572,24 +645,47 @@ function FichaModal({ produtoId, onClose, onChanged }) {
 
   function startEditItem(item) {
     setEditingItemId(item.id)
-    setEditingQty(String(Number(item.quantidade)))
+    setEditForm({
+      quantidade: String(Number(item.quantidade)),
+      tipoUso: item.tipoUso ?? 'INGREDIENTE',
+      formaRateio: item.formaRateio ?? 'POR_PRODUTO',
+      quantidadeAtendida:
+        item.quantidadeAtendida === null || item.quantidadeAtendida === undefined
+          ? ''
+          : String(Number(item.quantidadeAtendida)),
+      aplicarMargem: item.aplicarMargem ?? true
+    })
     setEditError(null)
   }
   function cancelEditItem() {
     setEditingItemId(null)
-    setEditingQty('')
+    setEditForm(null)
     setEditError(null)
   }
   function saveEditItem() {
     setEditError(null)
-    const q = Number(editingQty)
+    const q = Number(editForm.quantidade)
     if (!Number.isFinite(q) || q <= 0) {
       setEditError('Quantidade deve ser maior que zero.')
       return
     }
+    if (editForm.formaRateio !== 'POR_PRODUTO') {
+      const qa = Number(editForm.quantidadeAtendida)
+      if (editForm.quantidadeAtendida === '' || !Number.isFinite(qa) || qa <= 0) {
+        setEditError(`${ATENDIDA_LABEL[editForm.formaRateio]} é obrigatório e deve ser maior que zero.`)
+        return
+      }
+    }
     setEditSubmitting(true)
     api
-      .put(`/ficha-tecnica/itens/${editingItemId}`, { quantidade: q })
+      .put(`/ficha-tecnica/itens/${editingItemId}`, {
+        quantidade: q,
+        tipoUso: editForm.tipoUso,
+        formaRateio: editForm.formaRateio,
+        quantidadeAtendida:
+          editForm.formaRateio === 'POR_PRODUTO' ? null : Number(editForm.quantidadeAtendida),
+        aplicarMargem: editForm.aplicarMargem
+      })
       .then(() => {
         cancelEditItem()
         return reload()
@@ -746,6 +842,32 @@ function FichaModal({ produtoId, onClose, onChanged }) {
               <Card title="Preço Sugerido" value="Em breve" hint="Cálculo em desenvolvimento" variant="info" />
               <Card title="Preço iFood" value="Em breve" hint="Cálculo em desenvolvimento" variant="info" />
             </div>
+            <div className="grid-3" style={{ marginTop: 12 }}>
+              <Card
+                title="Custo com Margem"
+                value={brl(fichaTotais.custoComMargem)}
+                hint="Ingredientes e produção própria"
+                variant="success"
+              />
+              <Card
+                title="Custos Embutidos"
+                value={brl(fichaTotais.custoEmbutido)}
+                hint="Embalagem, acompanhamento, operacional"
+                variant="warn"
+              />
+              <Card
+                title="Custo Total Real"
+                value={brl(fichaTotais.custoTotalFicha)}
+                hint="Base do CMV real"
+                variant="brand"
+              />
+            </div>
+            <div className="alert alert-gray" style={{ marginTop: 12 }}>
+              <div className="alert-msg">
+                Embalagens, acompanhamentos e custos operacionais entram no custo real do produto,
+                mas podem ficar fora da base de margem para evitar overprice.
+              </div>
+            </div>
 
             {semFicha ? (
               <div className="alert alert-gray" style={{ marginTop: 12 }}>
@@ -771,7 +893,7 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                     <select
                       className="form-input"
                       value={formInsumoId}
-                      onChange={(e) => setFormInsumoId(e.target.value)}
+                      onChange={(e) => handleSelectInsumo(e.target.value)}
                     >
                       <option value="">— selecione —</option>
                       {insumos.map((i) => (
@@ -781,7 +903,7 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                       ))}
                     </select>
                   </div>
-                  <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 110 }}>
+                  <div className="form-group" style={{ marginBottom: 0, flex: 0.8, minWidth: 100 }}>
                     <label className="form-label">Quantidade</label>
                     <input
                       className="form-input"
@@ -793,17 +915,57 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                       placeholder="0"
                     />
                   </div>
-                  <div className="form-group" style={{ marginBottom: 0, flex: 0.7, minWidth: 80 }}>
-                    <label className="form-label">Unidade</label>
-                    <div
+                  <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 130 }}>
+                    <label className="form-label">Tipo de uso</label>
+                    <select
                       className="form-input"
-                      style={{ background: '#fafafa', color: '#888', display: 'flex', alignItems: 'center' }}
+                      value={formTipoUso}
+                      onChange={(e) => setFormTipoUso(e.target.value)}
                     >
-                      {(() => {
-                        const i = insumos.find((x) => String(x.id) === formInsumoId)
-                        return i ? i.unidade : '—'
-                      })()}
+                      {TIPO_USO_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 130 }}>
+                    <label className="form-label">Forma de rateio</label>
+                    <select
+                      className="form-input"
+                      value={formRateio}
+                      onChange={(e) => setFormRateio(e.target.value)}
+                    >
+                      {RATEIO_OPTIONS.map((o) => (
+                        <option key={o.value} value={o.value}>{o.label}</option>
+                      ))}
+                    </select>
+                  </div>
+                  {formRateio !== 'POR_PRODUTO' && (
+                    <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 150 }}>
+                      <label className="form-label">{ATENDIDA_LABEL[formRateio]}</label>
+                      <input
+                        className="form-input"
+                        type="number"
+                        min="0"
+                        step="0.001"
+                        value={formAtendida}
+                        onChange={(e) => setFormAtendida(e.target.value)}
+                        placeholder="Ex.: 2"
+                      />
                     </div>
+                  )}
+                  <div className="form-group" style={{ marginBottom: 0, minWidth: 110 }}>
+                    <label className="form-label">Aplicar margem?</label>
+                    <label
+                      className="form-input"
+                      style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={formMargem}
+                        onChange={(e) => setFormMargem(e.target.checked)}
+                      />
+                      <span style={{ fontSize: 13, color: '#555' }}>{formMargem ? 'Sim' : 'Não'}</span>
+                    </label>
                   </div>
                   <button type="submit" className="btn btn-primary" disabled={itemSubmitting}>
                     {itemSubmitting ? 'Adicionando…' : 'Adicionar item'}
@@ -838,9 +1000,13 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                     <thead>
                       <tr>
                         <th>Insumo</th>
+                        <th>Tipo de uso</th>
                         <th>Unidade</th>
                         <th>Custo unitário</th>
                         <th>Quantidade</th>
+                        <th>Forma de rateio</th>
+                        <th>Qtde. atendida</th>
+                        <th>Margem?</th>
                         <th>Custo aplicado</th>
                         <th style={{ textAlign: 'right' }}>Ações</th>
                       </tr>
@@ -849,32 +1015,116 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                       {itens.map((item) => {
                         const isEditing = editingItemId === item.id
                         const custoUnit = Number(item.insumo.custoUnitario)
-                        const qty = isEditing ? Number(editingQty) : Number(item.quantidade)
-                        const custoItemAtual = qty > 0 ? qty * custoUnit : 0
+
+                        let custoAplicadoExibido
+                        if (isEditing && editForm) {
+                          const q = Number(editForm.quantidade)
+                          const qa = Number(editForm.quantidadeAtendida)
+                          const divisor =
+                            editForm.formaRateio !== 'POR_PRODUTO' && qa > 0 ? qa : 1
+                          custoAplicadoExibido = q > 0 ? (q * custoUnit) / divisor : 0
+                        } else {
+                          custoAplicadoExibido = item.custoAplicado
+                        }
 
                         return (
                           <tr key={item.id} style={isEditing ? { background: '#fff7ed' } : undefined}>
                             <td style={{ fontWeight: 500, color: '#111' }}>{item.insumo.nome}</td>
+                            <td>
+                              {isEditing ? (
+                                <select
+                                  className="form-input"
+                                  style={{ ...cellInputStyle, width: 140 }}
+                                  value={editForm.tipoUso}
+                                  onChange={(e) => setEditForm({ ...editForm, tipoUso: e.target.value })}
+                                >
+                                  {TIPO_USO_OPTIONS.map((o) => (
+                                    <option key={o.value} value={o.value}>{o.label}</option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <span className="badge badge-gray">
+                                  {TIPO_USO_LABEL[item.tipoUso] ?? item.tipoUso}
+                                </span>
+                              )}
+                            </td>
                             <td style={{ color: '#888' }}>{item.insumo.unidade}</td>
                             <td>{brl(custoUnit)}</td>
                             <td>
                               {isEditing ? (
                                 <input
                                   className="form-input"
-                                  style={{ ...cellInputStyle, width: 110 }}
+                                  style={{ ...cellInputStyle, width: 90 }}
                                   type="number"
                                   min="0"
                                   step="0.0001"
-                                  value={editingQty}
-                                  onChange={(e) => setEditingQty(e.target.value)}
+                                  value={editForm.quantidade}
+                                  onChange={(e) => setEditForm({ ...editForm, quantidade: e.target.value })}
                                   autoFocus
                                 />
                               ) : (
                                 <strong>{num(item.quantidade)}</strong>
                               )}
                             </td>
+                            <td>
+                              {isEditing ? (
+                                <select
+                                  className="form-input"
+                                  style={{ ...cellInputStyle, width: 140 }}
+                                  value={editForm.formaRateio}
+                                  onChange={(e) => setEditForm({ ...editForm, formaRateio: e.target.value })}
+                                >
+                                  {RATEIO_OPTIONS.map((o) => (
+                                    <option key={o.value} value={o.value}>{o.label}</option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <span style={{ fontSize: 12, color: '#666' }}>
+                                  {RATEIO_LABEL[item.formaRateio] ?? item.formaRateio}
+                                </span>
+                              )}
+                            </td>
+                            <td>
+                              {isEditing ? (
+                                editForm.formaRateio === 'POR_PRODUTO' ? (
+                                  <span className="clr-muted">—</span>
+                                ) : (
+                                  <input
+                                    className="form-input"
+                                    style={{ ...cellInputStyle, width: 80 }}
+                                    type="number"
+                                    min="0"
+                                    step="0.001"
+                                    value={editForm.quantidadeAtendida}
+                                    onChange={(e) =>
+                                      setEditForm({ ...editForm, quantidadeAtendida: e.target.value })
+                                    }
+                                    placeholder="Ex.: 2"
+                                  />
+                                )
+                              ) : item.quantidadeAtendida === null || item.quantidadeAtendida === undefined ? (
+                                <span className="clr-muted">—</span>
+                              ) : (
+                                num(item.quantidadeAtendida)
+                              )}
+                            </td>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  type="checkbox"
+                                  checked={editForm.aplicarMargem}
+                                  onChange={(e) =>
+                                    setEditForm({ ...editForm, aplicarMargem: e.target.checked })
+                                  }
+                                />
+                              ) : item.aplicarMargem ? (
+                                <span className="badge badge-green">Sim</span>
+                              ) : (
+                                <span className="badge badge-gray">Não</span>
+                              )}
+                            </td>
                             <td className="clr-orange" style={{ fontWeight: 600 }}>
-                              {brl(custoItemAtual)}
+                              {brl(custoAplicadoExibido)}
                             </td>
                             <td style={{ textAlign: 'right' }}>
                               <div style={{ display: 'inline-flex', gap: 6 }}>

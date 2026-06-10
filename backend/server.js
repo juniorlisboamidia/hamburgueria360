@@ -587,6 +587,78 @@ app.delete('/api/produtos/:id', async (req, res) => {
 
 // ===== Ficha Técnica =====
 
+const TIPOS_USO_FICHA = ['INGREDIENTE', 'EMBALAGEM', 'ACOMPANHAMENTO', 'OPERACIONAL'];
+const FORMAS_RATEIO_FICHA = ['POR_PRODUTO', 'POR_EMBALAGEM', 'POR_PEDIDO'];
+
+// tipoUso/aplicarMargem sugeridos a partir do tipo do insumo
+function defaultsUsoPorTipoInsumo(tipoInsumo) {
+  if (tipoInsumo === 'EMBALAGEM') return { tipoUso: 'EMBALAGEM', aplicarMargem: false };
+  if (tipoInsumo === 'ACOMPANHAMENTO') return { tipoUso: 'ACOMPANHAMENTO', aplicarMargem: false };
+  if (tipoInsumo === 'OPERACIONAL') return { tipoUso: 'OPERACIONAL', aplicarMargem: false };
+  return { tipoUso: 'INGREDIENTE', aplicarMargem: true };
+}
+
+// custoBruto = quantidade × custoUnitario
+// custoAplicado = custoBruto / quantidadeAtendida (POR_EMBALAGEM e POR_PEDIDO)
+function computeItemFicha(item) {
+  const custoBruto = Number(item.quantidade) * Number(item.insumo.custoUnitario);
+  const qa =
+    item.quantidadeAtendida === null || item.quantidadeAtendida === undefined
+      ? null
+      : Number(item.quantidadeAtendida);
+  const rateia = item.formaRateio === 'POR_EMBALAGEM' || item.formaRateio === 'POR_PEDIDO';
+  const divisor = rateia && qa && qa > 0 ? qa : 1;
+  const custoAplicado = custoBruto / divisor;
+  return {
+    custoBruto: Number(custoBruto.toFixed(4)),
+    custoAplicado: Number(custoAplicado.toFixed(4))
+  };
+}
+
+function computeFichaTotals(itensRaw) {
+  let custoComMargem = 0;
+  let custoEmbutido = 0;
+  const itens = itensRaw.map((item) => {
+    const { custoBruto, custoAplicado } = computeItemFicha(item);
+    if (item.aplicarMargem) {
+      custoComMargem += custoAplicado;
+    } else {
+      custoEmbutido += custoAplicado;
+    }
+    return { ...item, custoBruto, custoAplicado, custoItem: custoAplicado };
+  });
+  return {
+    itens,
+    custoComMargem: Number(custoComMargem.toFixed(4)),
+    custoEmbutido: Number(custoEmbutido.toFixed(4)),
+    custoTotalFicha: Number((custoComMargem + custoEmbutido).toFixed(4))
+  };
+}
+
+// Valida campos de rateio (POST e PUT). Recebe valores já mesclados com o estado atual.
+function validateRateioFields({ tipoUso, formaRateio, quantidadeAtendida, aplicarMargem }) {
+  if (!TIPOS_USO_FICHA.includes(tipoUso)) {
+    return `tipoUso inválido. Valores permitidos: ${TIPOS_USO_FICHA.join(', ')}`;
+  }
+  if (!FORMAS_RATEIO_FICHA.includes(formaRateio)) {
+    return `formaRateio inválida. Valores permitidos: ${FORMAS_RATEIO_FICHA.join(', ')}`;
+  }
+  if (typeof aplicarMargem !== 'boolean') {
+    return 'aplicarMargem deve ser booleano';
+  }
+  if (formaRateio === 'POR_EMBALAGEM' || formaRateio === 'POR_PEDIDO') {
+    if (
+      quantidadeAtendida === null ||
+      quantidadeAtendida === undefined ||
+      isNaN(Number(quantidadeAtendida)) ||
+      Number(quantidadeAtendida) <= 0
+    ) {
+      return 'quantidadeAtendida é obrigatória e deve ser maior que zero para rateio POR_EMBALAGEM ou POR_PEDIDO';
+    }
+  }
+  return null;
+}
+
 app.get('/api/produtos/:produtoId/ficha-tecnica', async (req, res) => {
   try {
     const produtoId = Number(req.params.produtoId);
@@ -605,22 +677,14 @@ app.get('/api/produtos/:produtoId/ficha-tecnica', async (req, res) => {
       orderBy: { id: 'asc' }
     });
 
-    let custoTotalFicha = 0;
-    const itens = itensRaw.map((item) => {
-      const qtd = Number(item.quantidade);
-      const custoUnit = Number(item.insumo.custoUnitario);
-      const custoItem = qtd * custoUnit;
-      custoTotalFicha += custoItem;
-      return {
-        ...item,
-        custoItem: Number(custoItem.toFixed(4))
-      };
-    });
+    const totals = computeFichaTotals(itensRaw);
 
     res.json({
       produto,
-      itens,
-      custoTotalFicha: Number(custoTotalFicha.toFixed(4))
+      itens: totals.itens,
+      custoComMargem: totals.custoComMargem,
+      custoEmbutido: totals.custoEmbutido,
+      custoTotalFicha: totals.custoTotalFicha
     });
   } catch (err) {
     console.error(err);
@@ -635,7 +699,8 @@ app.post('/api/produtos/:produtoId/ficha-tecnica/itens', async (req, res) => {
       return res.status(400).json({ error: 'produtoId inválido' });
     }
 
-    const { insumoId, quantidade } = req.body ?? {};
+    const { insumoId, quantidade, tipoUso, formaRateio, quantidadeAtendida, aplicarMargem } =
+      req.body ?? {};
 
     if (!Number.isInteger(Number(insumoId)) || Number(insumoId) <= 0) {
       return res.status(400).json({ error: 'insumoId inválido' });
@@ -657,6 +722,24 @@ app.post('/api/produtos/:produtoId/ficha-tecnica/itens', async (req, res) => {
       return res.status(404).json({ error: 'Insumo não encontrado' });
     }
 
+    const defaults = defaultsUsoPorTipoInsumo(insumo.tipo);
+    const merged = {
+      tipoUso: tipoUso ?? defaults.tipoUso,
+      formaRateio: formaRateio ?? 'POR_PRODUTO',
+      quantidadeAtendida:
+        quantidadeAtendida === undefined || quantidadeAtendida === null || quantidadeAtendida === ''
+          ? null
+          : Number(quantidadeAtendida),
+      aplicarMargem: aplicarMargem === undefined ? defaults.aplicarMargem : aplicarMargem
+    };
+    if (merged.formaRateio === 'POR_PRODUTO') {
+      merged.quantidadeAtendida = null;
+    }
+    const rateioError = validateRateioFields(merged);
+    if (rateioError) {
+      return res.status(400).json({ error: rateioError });
+    }
+
     const existente = await prisma.fichaTecnicaItem.findUnique({
       where: { produtoId_insumoId: { produtoId, insumoId: Number(insumoId) } }
     });
@@ -671,12 +754,16 @@ app.post('/api/produtos/:produtoId/ficha-tecnica/itens', async (req, res) => {
       data: {
         produtoId,
         insumoId: Number(insumoId),
-        quantidade: Number(quantidade)
+        quantidade: Number(quantidade),
+        tipoUso: merged.tipoUso,
+        formaRateio: merged.formaRateio,
+        quantidadeAtendida: merged.quantidadeAtendida,
+        aplicarMargem: merged.aplicarMargem
       },
       include: { insumo: true }
     });
 
-    res.status(201).json(item);
+    res.status(201).json({ ...item, ...computeItemFicha(item) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erro interno ao criar item da ficha técnica' });
@@ -690,26 +777,63 @@ app.put('/api/ficha-tecnica/itens/:id', async (req, res) => {
       return res.status(400).json({ error: 'id inválido' });
     }
 
-    const { quantidade } = req.body ?? {};
-    if (quantidade === undefined || quantidade === null || isNaN(Number(quantidade))) {
-      return res.status(400).json({ error: 'quantidade é obrigatória e deve ser numérica' });
-    }
-    if (Number(quantidade) <= 0) {
-      return res.status(400).json({ error: 'quantidade deve ser maior que zero' });
-    }
+    const { quantidade, tipoUso, formaRateio, quantidadeAtendida, aplicarMargem } =
+      req.body ?? {};
 
     const existing = await prisma.fichaTecnicaItem.findUnique({ where: { id } });
     if (!existing) {
       return res.status(404).json({ error: 'Item da ficha técnica não encontrado' });
     }
 
+    const data = {};
+
+    if (quantidade !== undefined) {
+      if (quantidade === null || isNaN(Number(quantidade))) {
+        return res.status(400).json({ error: 'quantidade deve ser numérica' });
+      }
+      if (Number(quantidade) <= 0) {
+        return res.status(400).json({ error: 'quantidade deve ser maior que zero' });
+      }
+      data.quantidade = Number(quantidade);
+    }
+    if (tipoUso !== undefined) data.tipoUso = tipoUso;
+    if (formaRateio !== undefined) data.formaRateio = formaRateio;
+    if (aplicarMargem !== undefined) data.aplicarMargem = aplicarMargem;
+    if (quantidadeAtendida !== undefined) {
+      data.quantidadeAtendida =
+        quantidadeAtendida === null || quantidadeAtendida === ''
+          ? null
+          : Number(quantidadeAtendida);
+    }
+
+    // Valida o estado final do item (campos novos mesclados com os atuais)
+    const merged = {
+      tipoUso: data.tipoUso ?? existing.tipoUso,
+      formaRateio: data.formaRateio ?? existing.formaRateio,
+      quantidadeAtendida:
+        data.quantidadeAtendida !== undefined
+          ? data.quantidadeAtendida
+          : existing.quantidadeAtendida === null
+          ? null
+          : Number(existing.quantidadeAtendida),
+      aplicarMargem: data.aplicarMargem ?? existing.aplicarMargem
+    };
+    if (merged.formaRateio === 'POR_PRODUTO') {
+      merged.quantidadeAtendida = null;
+      data.quantidadeAtendida = null;
+    }
+    const rateioError = validateRateioFields(merged);
+    if (rateioError) {
+      return res.status(400).json({ error: rateioError });
+    }
+
     const updated = await prisma.fichaTecnicaItem.update({
       where: { id },
-      data: { quantidade: Number(quantidade) },
+      data,
       include: { insumo: true }
     });
 
-    res.json(updated);
+    res.json({ ...updated, ...computeItemFicha(updated) });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erro interno ao atualizar item da ficha técnica' });
@@ -769,6 +893,9 @@ app.get('/api/produtos/:id/analise', async (req, res) => {
         produto: produtoOut,
         precoVenda: round2(precoVenda),
         custoFichaTecnica: 0,
+        custoComMargem: 0,
+        custoEmbutido: 0,
+        custoTotalFicha: 0,
         lucroBruto: null,
         cmvPercentual: null,
         margemBrutaPercentual: null,
@@ -778,15 +905,18 @@ app.get('/api/produtos/:id/analise', async (req, res) => {
       });
     }
 
-    const custoFichaTecnica = itens.reduce((acc, item) => {
-      return acc + Number(item.quantidade) * Number(item.insumo.custoUnitario);
-    }, 0);
+    // Custo real considera rateio (POR_EMBALAGEM / POR_PEDIDO dividem pelo atendimento)
+    const totals = computeFichaTotals(itens);
+    const custoFichaTecnica = totals.custoTotalFicha;
 
     if (precoVenda === 0) {
       return res.json({
         produto: produtoOut,
         precoVenda: 0,
         custoFichaTecnica: round2(custoFichaTecnica),
+        custoComMargem: round2(totals.custoComMargem),
+        custoEmbutido: round2(totals.custoEmbutido),
+        custoTotalFicha: round2(totals.custoTotalFicha),
         lucroBruto: null,
         cmvPercentual: null,
         margemBrutaPercentual: null,
@@ -822,6 +952,9 @@ app.get('/api/produtos/:id/analise', async (req, res) => {
       produto: produtoOut,
       precoVenda: round2(precoVenda),
       custoFichaTecnica: round2(custoFichaTecnica),
+      custoComMargem: round2(totals.custoComMargem),
+      custoEmbutido: round2(totals.custoEmbutido),
+      custoTotalFicha: round2(totals.custoTotalFicha),
       lucroBruto: round2(lucroBruto),
       cmvPercentual: round2(cmvPercentual),
       margemBrutaPercentual: round2(margemBrutaPercentual),
@@ -1367,10 +1500,7 @@ app.get('/api/ponto-equilibrio', async (req, res) => {
       const preco = Number(p.precoVenda);
       if (preco <= 0) continue;
       if (!p.fichaTecnica || p.fichaTecnica.length === 0) continue;
-      const custoFicha = p.fichaTecnica.reduce(
-        (acc, item) => acc + Number(item.quantidade) * Number(item.insumo.custoUnitario),
-        0
-      );
+      const custoFicha = computeFichaTotals(p.fichaTecnica).custoTotalFicha;
       somaCmv += (custoFicha / preco) * 100;
       qtdProdutosValidos += 1;
     }
@@ -1538,10 +1668,7 @@ app.get('/api/dashboard', async (req, res) => {
       const preco = Number(p.precoVenda);
       if (preco <= 0) continue;
       if (!p.fichaTecnica || p.fichaTecnica.length === 0) continue;
-      const custoFicha = p.fichaTecnica.reduce(
-        (acc, item) => acc + Number(item.quantidade) * Number(item.insumo.custoUnitario),
-        0
-      );
+      const custoFicha = computeFichaTotals(p.fichaTecnica).custoTotalFicha;
       const cmvProduto = (custoFicha / preco) * 100;
       somaCmv += cmvProduto;
       qtdProdutosValidos += 1;
