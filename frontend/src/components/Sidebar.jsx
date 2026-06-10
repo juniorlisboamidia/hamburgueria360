@@ -10,7 +10,7 @@ const precificacao = [
 ]
 
 const gestao = [
-  { to: '/custos-fixos', label: 'Custos' },
+  { to: '/custos', label: 'Custos' },
   { to: '/faturamento',  label: 'Faturamento' }
 ]
 

@@ -4,6 +4,7 @@ import Dashboard from './pages/Dashboard'
 import Produtos from './pages/Produtos'
 import Insumos from './pages/Insumos'
 import FichaTecnica from './pages/FichaTecnica'
+import Custos from './pages/Custos'
 import CustosFixos from './pages/CustosFixos'
 import CustosVariaveis from './pages/CustosVariaveis'
 import Faturamento from './pages/Faturamento'
@@ -20,6 +21,7 @@ export default function App() {
           <Route path="insumos" element={<Insumos />} />
           <Route path="ficha-tecnica" element={<FichaTecnica />} />
           <Route path="ficha-tecnica/:produtoId" element={<FichaTecnica />} />
+          <Route path="custos" element={<Custos />} />
           <Route path="custos-fixos" element={<CustosFixos />} />
           <Route path="custos-variaveis" element={<CustosVariaveis />} />
           <Route path="faturamento" element={<Faturamento />} />
