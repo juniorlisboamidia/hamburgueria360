@@ -32,13 +32,41 @@ const TIPOS_INSUMO = [
   'OPERACIONAL'
 ];
 
+// Unidades padronizadas: Kg (custo por 1 kg; quantidades em ficha/receita lançadas em gramas)
+// e Und (custo por 1 unidade; quantidades lançadas em unidades).
+function normalizeUnidade(u) {
+  if (typeof u !== 'string') return null;
+  const v = u.trim().toLowerCase();
+  if (['kg', 'kgs', 'kilo', 'quilo', 'quilograma'].includes(v)) return 'Kg';
+  if (['und', 'un', 'u', 'unid', 'unidade', 'unidades'].includes(v)) return 'Und';
+  return null;
+}
+
+// Converte a quantidade informada para a base do custo unitário:
+// insumo em Kg → quantidade em gramas → divide por 1000; insumo em Und → direto.
+function quantidadeBase(quantidade, unidadeInsumo) {
+  const q = Number(quantidade);
+  return normalizeUnidade(unidadeInsumo) === 'Kg' ? q / 1000 : q;
+}
+
+// Unidade em que a quantidade deve ser informada/exibida na ficha ou receita
+function unidadeQuantidade(unidadeInsumo) {
+  return normalizeUnidade(unidadeInsumo) === 'Kg' ? 'g' : 'und';
+}
+
+function insumoComUnidadeNormalizada(insumo) {
+  if (!insumo) return insumo;
+  const norm = normalizeUnidade(insumo.unidade);
+  return norm ? { ...insumo, unidade: norm } : insumo;
+}
+
 app.get('/api/insumos', async (req, res) => {
   try {
     const insumos = await prisma.insumo.findMany({
       where: { ativo: true },
       orderBy: { nome: 'asc' }
     });
-    res.json(insumos);
+    res.json(insumos.map(insumoComUnidadeNormalizada));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erro interno ao listar insumos' });
@@ -52,8 +80,9 @@ app.post('/api/insumos', async (req, res) => {
     if (typeof nome !== 'string' || nome.trim() === '') {
       return res.status(400).json({ error: 'nome é obrigatório' });
     }
-    if (typeof unidade !== 'string' || unidade.trim() === '') {
-      return res.status(400).json({ error: 'unidade é obrigatória' });
+    const unidadeNormalizada = normalizeUnidade(unidade);
+    if (!unidadeNormalizada) {
+      return res.status(400).json({ error: 'Unidade inválida. Use Kg ou Und.' });
     }
     if (custoUnitario === undefined || custoUnitario === null || isNaN(Number(custoUnitario))) {
       return res.status(400).json({ error: 'custoUnitario é obrigatório e deve ser numérico' });
@@ -71,7 +100,7 @@ app.post('/api/insumos', async (req, res) => {
       data: {
         nome: nome.trim(),
         tipo: tipo ?? 'INGREDIENTE',
-        unidade: unidade.trim(),
+        unidade: unidadeNormalizada,
         custoUnitario: Number(custoUnitario),
         fornecedor: fornecedor ? String(fornecedor).trim() : null,
         ativo: true
@@ -115,10 +144,11 @@ app.put('/api/insumos/:id', async (req, res) => {
       data.tipo = tipo;
     }
     if (unidade !== undefined) {
-      if (typeof unidade !== 'string' || unidade.trim() === '') {
-        return res.status(400).json({ error: 'unidade inválida' });
+      const unidadeNormalizada = normalizeUnidade(unidade);
+      if (!unidadeNormalizada) {
+        return res.status(400).json({ error: 'Unidade inválida. Use Kg ou Und.' });
       }
-      data.unidade = unidade.trim();
+      data.unidade = unidadeNormalizada;
     }
     if (custoUnitario !== undefined) {
       if (custoUnitario === null || isNaN(Number(custoUnitario))) {
@@ -177,9 +207,14 @@ app.delete('/api/insumos/:id', async (req, res) => {
 const round4 = (n) => Number(n.toFixed(4));
 
 function computeReceita(receita) {
+  // Mesma regra da ficha técnica: ingrediente em Kg tem quantidade informada em gramas
   const itens = receita.itens.map((item) => ({
     ...item,
-    custoItem: round4(Number(item.quantidade) * Number(item.insumo.custoUnitario))
+    insumo: insumoComUnidadeNormalizada(item.insumo),
+    unidadeQuantidadeReceita: unidadeQuantidade(item.insumo?.unidade),
+    custoItem: round4(
+      quantidadeBase(item.quantidade, item.insumo.unidade) * Number(item.insumo.custoUnitario)
+    )
   }));
   const custoTotalReceita = round4(itens.reduce((s, i) => s + i.custoItem, 0));
   const rendimento = Number(receita.rendimento);
@@ -209,7 +244,7 @@ function insumoResumo(insumo) {
     id: insumo.id,
     nome: insumo.nome,
     tipo: insumo.tipo,
-    unidade: insumo.unidade,
+    unidade: normalizeUnidade(insumo.unidade) ?? insumo.unidade,
     custoUnitario: insumo.custoUnitario
   };
 }
@@ -598,10 +633,12 @@ function defaultsUsoPorTipoInsumo(tipoInsumo) {
   return { tipoUso: 'INGREDIENTE', aplicarMargem: true };
 }
 
-// custoBruto = quantidade × custoUnitario
+// custoBruto = quantidadeBase × custoUnitario
+// (insumo em Kg: quantidade informada em gramas, convertida com /1000; em Und: direto)
 // custoAplicado = custoBruto / quantidadeAtendida (POR_EMBALAGEM e POR_PEDIDO)
 function computeItemFicha(item) {
-  const custoBruto = Number(item.quantidade) * Number(item.insumo.custoUnitario);
+  const custoBruto =
+    quantidadeBase(item.quantidade, item.insumo.unidade) * Number(item.insumo.custoUnitario);
   const qa =
     item.quantidadeAtendida === null || item.quantidadeAtendida === undefined
       ? null
@@ -625,7 +662,14 @@ function computeFichaTotals(itensRaw) {
     } else {
       custoEmbutido += custoAplicado;
     }
-    return { ...item, custoBruto, custoAplicado, custoItem: custoAplicado };
+    return {
+      ...item,
+      insumo: insumoComUnidadeNormalizada(item.insumo),
+      unidadeQuantidadeFicha: unidadeQuantidade(item.insumo?.unidade),
+      custoBruto,
+      custoAplicado,
+      custoItem: custoAplicado
+    };
   });
   return {
     itens,

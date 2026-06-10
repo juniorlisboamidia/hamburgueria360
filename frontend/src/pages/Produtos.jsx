@@ -26,6 +26,17 @@ function num(value) {
   return qtyFormatter.format(Number(value))
 }
 
+// Unidades padronizadas: Kg (custo por kg, quantidades da ficha em gramas) e Und (por unidade)
+function unidadeNormalizada(u) {
+  const v = String(u ?? '').trim().toLowerCase()
+  if (['kg', 'kgs', 'kilo', 'quilo', 'quilograma'].includes(v)) return 'Kg'
+  if (['und', 'un', 'u', 'unid', 'unidade', 'unidades'].includes(v)) return 'Und'
+  return null
+}
+function sufixoQuantidade(unidadeInsumo) {
+  return unidadeNormalizada(unidadeInsumo) === 'Kg' ? 'g' : 'und'
+}
+
 const STATUS_BADGE = {
   SAUDAVEL:  'badge-green',
   ATENCAO:   'badge-yellow',
@@ -1014,6 +1025,11 @@ function FichaModal({ produtoId, onClose, onChanged }) {
   const status = analise?.statusCmv
   const semFicha = status === 'SEM_FICHA'
 
+  const insumoSelecionado = insumos.find((x) => String(x.id) === formInsumoId)
+  const insumoSelUnidade = insumoSelecionado
+    ? unidadeNormalizada(insumoSelecionado.unidade)
+    : null
+
   return (
     <div className="modal-overlay">
       <div className="modal modal-card-large">
@@ -1253,14 +1269,16 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                       {itens.map((item) => {
                         const isEditing = editingItemId === item.id
                         const custoUnit = Number(item.insumo.custoUnitario)
+                        const itemKg = unidadeNormalizada(item.insumo.unidade) === 'Kg'
 
                         let custoAplicadoExibido
                         if (isEditing && editForm) {
                           const q = Number(editForm.quantidade)
+                          const qBase = itemKg ? q / 1000 : q
                           const qa = Number(editForm.quantidadeAtendida)
                           const divisor =
                             editForm.formaRateio !== 'POR_PRODUTO' && qa > 0 ? qa : 1
-                          custoAplicadoExibido = q > 0 ? (q * custoUnit) / divisor : 0
+                          custoAplicadoExibido = q > 0 ? (qBase * custoUnit) / divisor : 0
                         } else {
                           custoAplicadoExibido = item.custoAplicado
                         }
@@ -1301,7 +1319,9 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                                   autoFocus
                                 />
                               ) : (
-                                <strong>{num(item.quantidade)}</strong>
+                                <strong>
+                                  {num(item.quantidade)} {item.unidadeQuantidadeFicha ?? sufixoQuantidade(item.insumo.unidade)}
+                                </strong>
                               )}
                             </td>
                             <td>
@@ -1441,7 +1461,13 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                     </select>
                   </div>
                   <div className="form-group" style={{ marginBottom: 0, flex: 0.8, minWidth: 100 }}>
-                    <label className="form-label">Quantidade</label>
+                    <label className="form-label">
+                      {insumoSelUnidade === 'Kg'
+                        ? 'Quantidade (g)'
+                        : insumoSelUnidade === 'Und'
+                        ? 'Quantidade (und)'
+                        : 'Quantidade'}
+                    </label>
                     <input
                       className="form-input"
                       type="number"
@@ -1449,7 +1475,7 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                       step="0.0001"
                       value={formQty}
                       onChange={(e) => setFormQty(e.target.value)}
-                      placeholder="0"
+                      placeholder={insumoSelUnidade === 'Kg' ? 'Ex.: 120' : 'Ex.: 1'}
                     />
                   </div>
                   <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 130 }}>
@@ -1508,6 +1534,16 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                     {itemSubmitting ? 'Adicionando…' : 'Adicionar item'}
                   </button>
                 </div>
+                {insumoSelUnidade === 'Kg' && (
+                  <div style={{ fontSize: 11.5, color: '#999', marginTop: 8 }}>
+                    Este insumo é cadastrado por kg. Informe aqui a quantidade em gramas.
+                  </div>
+                )}
+                {insumoSelUnidade === 'Und' && (
+                  <div style={{ fontSize: 11.5, color: '#999', marginTop: 8 }}>
+                    Este insumo é cadastrado por unidade. Informe aqui a quantidade de unidades.
+                  </div>
+                )}
                 {itemError && (
                   <div className="alert alert-red" style={{ marginTop: 12, marginBottom: 0 }}>
                     <div className="alert-msg clr-red">{itemError}</div>
