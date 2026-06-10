@@ -149,6 +149,19 @@ a { text-decoration: none; color: inherit; }
   gap: 8px;
   margin-top: 16px;
 }
+.modal-card-large {
+  max-width: 980px;
+  width: calc(100vw - 48px);
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+}
+.modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
 
 /* Main content */
 .main-area {

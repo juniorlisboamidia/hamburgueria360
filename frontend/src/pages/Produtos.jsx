@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
 import api from '../services/api'
 import Card from '../components/Card'
 
@@ -8,6 +7,7 @@ const brlFormatter = new Intl.NumberFormat('pt-BR', {
   currency: 'BRL'
 })
 const numberFormatter = new Intl.NumberFormat('pt-BR')
+const qtyFormatter = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 4 })
 
 function brl(value) {
   if (value === null || value === undefined) return '—'
@@ -20,6 +20,10 @@ function pct(value) {
 function int(value) {
   if (value === null || value === undefined) return '—'
   return numberFormatter.format(Number(value))
+}
+function num(value) {
+  if (value === null || value === undefined) return '—'
+  return qtyFormatter.format(Number(value))
 }
 
 const STATUS_BADGE = {
@@ -37,6 +41,14 @@ const STATUS_LABEL = {
   CRITICO:   'Crítico',
   SEM_FICHA: 'Sem ficha',
   SEM_PRECO: 'Sem preço'
+}
+const STATUS_ALERT = {
+  SAUDAVEL:  'alert-green',
+  ATENCAO:   'alert-yellow',
+  ALERTA:    'alert-yellow',
+  CRITICO:   'alert-red',
+  SEM_FICHA: 'alert-gray',
+  SEM_PRECO: 'alert-gray'
 }
 const CMV_COLOR_CLASS = {
   SAUDAVEL:  'clr-green',
@@ -66,6 +78,8 @@ function payloadFromForm(form) {
   }
 }
 
+const cellInputStyle = { padding: '6px 10px', fontSize: 13 }
+
 const metricRowStyle = {
   display: 'flex',
   justifyContent: 'space-between',
@@ -90,25 +104,31 @@ export default function Produtos() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
-  const [formOpen, setFormOpen] = useState(false)
-  const [editingId, setEditingId] = useState(null)
-  const [form, setForm] = useState(FORM_BLANK)
-  const [formError, setFormError] = useState(null)
-  const [submitting, setSubmitting] = useState(false)
+  // Modal simples: apenas criação de produto
+  const [createOpen, setCreateOpen] = useState(false)
+  const [createForm, setCreateForm] = useState(FORM_BLANK)
+  const [createError, setCreateError] = useState(null)
+  const [creating, setCreating] = useState(false)
 
   const [deletingId, setDeletingId] = useState(null)
   const [feedback, setFeedback] = useState(null)
 
-  function load() {
-    setLoading(true)
-    setError(null)
-    api
+  const [fichaProdutoId, setFichaProdutoId] = useState(null)
+
+  function fetchProdutos() {
+    return api
       .get('/produtos')
       .then((res) => Promise.all(
         res.data.map((p) =>
           api.get(`/produtos/${p.id}/analise`).then((r) => ({ ...p, analise: r.data }))
         )
       ))
+  }
+
+  function load() {
+    setLoading(true)
+    setError(null)
+    fetchProdutos()
       .then((rows) => {
         setProdutos(rows)
         setLoading(false)
@@ -124,59 +144,46 @@ export default function Produtos() {
       })
   }
 
+  // Recarrega a lista sem acionar o loading de página inteira
+  // (usado pelo modal de ficha para atualizar os cards atrás dele)
+  function refresh() {
+    return fetchProdutos()
+      .then((rows) => setProdutos(rows))
+      .catch(() => {})
+  }
+
   useEffect(() => { load() }, [])
 
   function openCreate() {
-    setEditingId(null)
-    setForm(FORM_BLANK)
-    setFormError(null)
+    setCreateForm(FORM_BLANK)
+    setCreateError(null)
     setFeedback(null)
-    setFormOpen(true)
+    setCreateOpen(true)
   }
 
-  function openEdit(p) {
-    setEditingId(p.id)
-    setForm({
-      nome: p.nome ?? '',
-      descricao: p.descricao ?? '',
-      precoVenda:
-        p.precoVenda === null || p.precoVenda === undefined ? '' : String(Number(p.precoVenda))
-    })
-    setFormError(null)
-    setFeedback(null)
-    setFormOpen(true)
+  function closeCreate() {
+    setCreateOpen(false)
+    setCreateForm(FORM_BLANK)
+    setCreateError(null)
   }
 
-  function closeForm() {
-    setFormOpen(false)
-    setEditingId(null)
-    setForm(FORM_BLANK)
-    setFormError(null)
-  }
-
-  function handleSubmit(e) {
+  function handleCreate(e) {
     e.preventDefault()
-    const err = validateForm(form)
-    if (err) { setFormError(err); return }
-    setFormError(null)
-    setSubmitting(true)
-
-    const request = editingId === null
-      ? api.post('/produtos', payloadFromForm(form))
-      : api.put(`/produtos/${editingId}`, payloadFromForm(form))
-
-    request
+    const err = validateForm(createForm)
+    if (err) { setCreateError(err); return }
+    setCreateError(null)
+    setCreating(true)
+    api
+      .post('/produtos', payloadFromForm(createForm))
       .then(() => {
-        setFeedback(editingId === null
-          ? 'Produto criado com sucesso.'
-          : 'Produto atualizado com sucesso.')
-        closeForm()
+        setFeedback('Produto criado com sucesso.')
+        closeCreate()
         load()
       })
       .catch((e) =>
-        setFormError(e?.response?.data?.error ?? e?.message ?? 'Erro ao salvar produto.')
+        setCreateError(e?.response?.data?.error ?? e?.message ?? 'Erro ao salvar produto.')
       )
-      .finally(() => setSubmitting(false))
+      .finally(() => setCreating(false))
   }
 
   function handleDelete(p) {
@@ -242,20 +249,18 @@ export default function Produtos() {
         </div>
       )}
 
-      {formOpen && (
+      {createOpen && (
         <div className="modal-overlay">
           <div className="modal">
-            <div className="modal-title">
-              {editingId === null ? 'Novo produto' : 'Editar produto'}
-            </div>
-            <form onSubmit={handleSubmit}>
+            <div className="modal-title">Novo produto</div>
+            <form onSubmit={handleCreate}>
               <div className="form-group" style={{ marginBottom: 12 }}>
                 <label className="form-label">Nome</label>
                 <input
                   className="form-input"
                   type="text"
-                  value={form.nome}
-                  onChange={(e) => setForm({ ...form, nome: e.target.value })}
+                  value={createForm.nome}
+                  onChange={(e) => setCreateForm({ ...createForm, nome: e.target.value })}
                   placeholder="X-Burger Especial"
                   autoFocus
                 />
@@ -265,8 +270,8 @@ export default function Produtos() {
                 <input
                   className="form-input"
                   type="text"
-                  value={form.descricao}
-                  onChange={(e) => setForm({ ...form, descricao: e.target.value })}
+                  value={createForm.descricao}
+                  onChange={(e) => setCreateForm({ ...createForm, descricao: e.target.value })}
                   placeholder="Pão, blend 160g, queijo..."
                 />
               </div>
@@ -277,27 +282,35 @@ export default function Produtos() {
                   type="number"
                   min="0"
                   step="0.01"
-                  value={form.precoVenda}
-                  onChange={(e) => setForm({ ...form, precoVenda: e.target.value })}
+                  value={createForm.precoVenda}
+                  onChange={(e) => setCreateForm({ ...createForm, precoVenda: e.target.value })}
                   placeholder="0,00"
                 />
               </div>
-              {formError && (
+              {createError && (
                 <div className="alert alert-red" style={{ marginTop: 12, marginBottom: 0 }}>
-                  <div className="alert-msg clr-red">{formError}</div>
+                  <div className="alert-msg clr-red">{createError}</div>
                 </div>
               )}
               <div className="modal-actions">
-                <button type="button" className="btn btn-secondary" onClick={closeForm} disabled={submitting}>
+                <button type="button" className="btn btn-secondary" onClick={closeCreate} disabled={creating}>
                   Cancelar
                 </button>
-                <button type="submit" className="btn btn-primary" disabled={submitting}>
-                  {submitting ? 'Salvando…' : 'Salvar produto'}
+                <button type="submit" className="btn btn-primary" disabled={creating}>
+                  {creating ? 'Salvando…' : 'Salvar produto'}
                 </button>
               </div>
             </form>
           </div>
         </div>
+      )}
+
+      {fichaProdutoId !== null && (
+        <FichaModal
+          produtoId={fichaProdutoId}
+          onClose={() => setFichaProdutoId(null)}
+          onChanged={refresh}
+        />
       )}
 
       <div className="section-title">Resumo</div>
@@ -402,10 +415,11 @@ export default function Produtos() {
                 )}
 
                 <div style={{ marginTop: 12, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                  <Link to={`/ficha-tecnica/${p.id}`} className="btn btn-primary">
-                    Abrir ficha
-                  </Link>
-                  <button type="button" className="btn btn-secondary" onClick={() => openEdit(p)}>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => setFichaProdutoId(p.id)}
+                  >
                     Editar
                   </button>
                   <button
@@ -422,6 +436,504 @@ export default function Produtos() {
           })}
         </div>
       )}
+    </div>
+  )
+}
+
+// ============ Modal grande: ficha do produto ============
+
+function FichaModal({ produtoId, onClose, onChanged }) {
+  const [produto, setProduto] = useState(null)
+  const [analise, setAnalise] = useState(null)
+  const [itens, setItens] = useState([])
+  const [insumos, setInsumos] = useState([])
+  const [custoTotal, setCustoTotal] = useState(0)
+
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+
+  const [dadosForm, setDadosForm] = useState(FORM_BLANK)
+  const [dadosError, setDadosError] = useState(null)
+  const [dadosOk, setDadosOk] = useState(false)
+  const [dadosSaving, setDadosSaving] = useState(false)
+
+  const [formInsumoId, setFormInsumoId] = useState('')
+  const [formQty, setFormQty] = useState('')
+  const [itemError, setItemError] = useState(null)
+  const [itemSubmitting, setItemSubmitting] = useState(false)
+
+  const [editingItemId, setEditingItemId] = useState(null)
+  const [editingQty, setEditingQty] = useState('')
+  const [editError, setEditError] = useState(null)
+  const [editSubmitting, setEditSubmitting] = useState(false)
+
+  function loadAll() {
+    setLoading(true)
+    setError(null)
+    Promise.all([
+      api.get(`/produtos/${produtoId}/ficha-tecnica`),
+      api.get(`/produtos/${produtoId}/analise`),
+      api.get('/insumos')
+    ])
+      .then(([fichaRes, analiseRes, insumosRes]) => {
+        const prod = fichaRes.data.produto
+        setProduto(prod)
+        setItens(fichaRes.data.itens)
+        setCustoTotal(fichaRes.data.custoTotalFicha)
+        setAnalise(analiseRes.data)
+        setInsumos(insumosRes.data)
+        setDadosForm({
+          nome: prod.nome ?? '',
+          descricao: prod.descricao ?? '',
+          precoVenda:
+            prod.precoVenda === null || prod.precoVenda === undefined
+              ? ''
+              : String(Number(prod.precoVenda))
+        })
+        setLoading(false)
+      })
+      .catch((err) => {
+        const status = err?.response?.status
+        if (status === 404) {
+          setError('Produto não encontrado ou inativo.')
+        } else {
+          setError(err?.response?.data?.error ?? err?.message ?? 'Erro inesperado.')
+        }
+        setLoading(false)
+      })
+  }
+
+  function reload() {
+    return Promise.all([
+      api.get(`/produtos/${produtoId}/ficha-tecnica`),
+      api.get(`/produtos/${produtoId}/analise`)
+    ]).then(([fichaRes, analiseRes]) => {
+      setProduto(fichaRes.data.produto)
+      setItens(fichaRes.data.itens)
+      setCustoTotal(fichaRes.data.custoTotalFicha)
+      setAnalise(analiseRes.data)
+      return onChanged()
+    })
+  }
+
+  useEffect(() => { loadAll() }, [produtoId])
+
+  function handleSaveDados(e) {
+    e.preventDefault()
+    const err = validateForm(dadosForm)
+    if (err) { setDadosError(err); return }
+    setDadosError(null)
+    setDadosOk(false)
+    setDadosSaving(true)
+    api
+      .put(`/produtos/${produtoId}`, payloadFromForm(dadosForm))
+      .then(() => { setDadosOk(true); return reload() })
+      .catch((e) =>
+        setDadosError(e?.response?.data?.error ?? e?.message ?? 'Erro ao salvar produto.')
+      )
+      .finally(() => setDadosSaving(false))
+  }
+
+  function handleAddItem(e) {
+    e.preventDefault()
+    setItemError(null)
+    if (!formInsumoId) {
+      setItemError('Selecione um insumo.')
+      return
+    }
+    const q = Number(formQty)
+    if (!Number.isFinite(q) || q <= 0) {
+      setItemError('Quantidade deve ser maior que zero.')
+      return
+    }
+    setItemSubmitting(true)
+    api
+      .post(`/produtos/${produtoId}/ficha-tecnica/itens`, {
+        insumoId: Number(formInsumoId),
+        quantidade: q
+      })
+      .then(() => {
+        setFormInsumoId('')
+        setFormQty('')
+        return reload()
+      })
+      .catch((err) => {
+        const status = err?.response?.status
+        if (status === 409) {
+          setItemError(
+            'Esse insumo já está na ficha. Edite a quantidade do item existente em vez de adicionar de novo.'
+          )
+        } else {
+          setItemError(err?.response?.data?.error ?? err?.message ?? 'Erro ao adicionar item.')
+        }
+      })
+      .finally(() => setItemSubmitting(false))
+  }
+
+  function startEditItem(item) {
+    setEditingItemId(item.id)
+    setEditingQty(String(Number(item.quantidade)))
+    setEditError(null)
+  }
+  function cancelEditItem() {
+    setEditingItemId(null)
+    setEditingQty('')
+    setEditError(null)
+  }
+  function saveEditItem() {
+    setEditError(null)
+    const q = Number(editingQty)
+    if (!Number.isFinite(q) || q <= 0) {
+      setEditError('Quantidade deve ser maior que zero.')
+      return
+    }
+    setEditSubmitting(true)
+    api
+      .put(`/ficha-tecnica/itens/${editingItemId}`, { quantidade: q })
+      .then(() => {
+        cancelEditItem()
+        return reload()
+      })
+      .catch((err) =>
+        setEditError(err?.response?.data?.error ?? err?.message ?? 'Erro ao salvar.')
+      )
+      .finally(() => setEditSubmitting(false))
+  }
+
+  function handleDeleteItem(item) {
+    const ok = window.confirm(`Remover "${item.insumo.nome}" da ficha técnica?`)
+    if (!ok) return
+    api
+      .delete(`/ficha-tecnica/itens/${item.id}`)
+      .then(reload)
+      .catch((err) =>
+        window.alert(err?.response?.data?.error ?? err?.message ?? 'Erro ao remover.')
+      )
+  }
+
+  const status = analise?.statusCmv
+  const semFicha = status === 'SEM_FICHA'
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal modal-card-large">
+        <div className="modal-header">
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 17, fontWeight: 600, color: '#111' }}>
+              {produto?.nome ?? 'Ficha do produto'}
+            </span>
+            {status && (
+              <span className={'badge ' + (STATUS_BADGE[status] ?? 'badge-gray')}>
+                {STATUS_LABEL[status] ?? status}
+              </span>
+            )}
+          </div>
+          <button type="button" className="btn btn-secondary" onClick={onClose}>
+            Fechar
+          </button>
+        </div>
+
+        {loading ? (
+          <div className="loading-state">Carregando ficha do produto…</div>
+        ) : error ? (
+          <div className="alert alert-red">
+            <div>
+              <div className="alert-title clr-red">Não foi possível carregar a ficha</div>
+              <div className="alert-msg">{error}</div>
+              <div style={{ marginTop: 10 }}>
+                <button type="button" className="btn btn-secondary" onClick={loadAll}>
+                  Tentar novamente
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <>
+            {/* Seção 1 — Dados do produto */}
+            <div className="section-title" style={{ marginTop: 0 }}>Dados do Produto</div>
+            <div className="card">
+              <form onSubmit={handleSaveDados}>
+                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                  <div className="form-group" style={{ marginBottom: 0, flex: 1.2, minWidth: 170 }}>
+                    <label className="form-label">Nome</label>
+                    <input
+                      className="form-input"
+                      type="text"
+                      value={dadosForm.nome}
+                      onChange={(e) => setDadosForm({ ...dadosForm, nome: e.target.value })}
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0, flex: 1.6, minWidth: 200 }}>
+                    <label className="form-label">Descrição (opcional)</label>
+                    <input
+                      className="form-input"
+                      type="text"
+                      value={dadosForm.descricao}
+                      onChange={(e) => setDadosForm({ ...dadosForm, descricao: e.target.value })}
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0, flex: 0.8, minWidth: 130 }}>
+                    <label className="form-label">Preço de venda (R$)</label>
+                    <input
+                      className="form-input"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={dadosForm.precoVenda}
+                      onChange={(e) => setDadosForm({ ...dadosForm, precoVenda: e.target.value })}
+                    />
+                  </div>
+                  <button type="submit" className="btn btn-primary" disabled={dadosSaving}>
+                    {dadosSaving ? 'Salvando…' : 'Salvar dados do produto'}
+                  </button>
+                </div>
+                {dadosError && (
+                  <div className="alert alert-red" style={{ marginTop: 12, marginBottom: 0 }}>
+                    <div className="alert-msg clr-red">{dadosError}</div>
+                  </div>
+                )}
+                {dadosOk && !dadosError && (
+                  <div className="alert alert-green" style={{ marginTop: 12, marginBottom: 0 }}>
+                    <div className="alert-msg clr-green">
+                      Dados salvos. CMV e margem recalculados.
+                    </div>
+                  </div>
+                )}
+              </form>
+            </div>
+
+            {/* Seção 2 — Resumo técnico */}
+            <div className="section-title">Resumo Técnico</div>
+            <div className="grid-4">
+              <Card title="Preço de Venda" value={brl(analise?.precoVenda)} hint="Cadastrado no produto" variant="brand" />
+              <Card
+                title="Custo da Ficha"
+                value={brl(custoTotal)}
+                hint={semFicha ? 'Sem itens' : 'Soma dos insumos'}
+              />
+              <Card
+                title="CMV"
+                value={pct(analise?.cmvPercentual)}
+                hint={semFicha ? 'Adicione insumos' : 'Custo / preço'}
+                variant={
+                  status === 'SAUDAVEL' ? 'success'
+                  : status === 'ATENCAO' ? 'warn'
+                  : status === 'ALERTA' ? 'brand'
+                  : status === 'CRITICO' ? 'danger'
+                  : 'info'
+                }
+              />
+              <Card
+                title="Margem Bruta"
+                value={pct(analise?.margemBrutaPercentual)}
+                hint={analise?.lucroBruto === null ? 'Indisponível' : `Lucro: ${brl(analise?.lucroBruto)}`}
+                variant={
+                  analise?.margemBrutaPercentual !== null && analise?.margemBrutaPercentual > 0
+                    ? 'success'
+                    : 'info'
+                }
+              />
+            </div>
+            <div className="grid-3" style={{ marginTop: 12 }}>
+              <Card
+                title="Lucro Bruto"
+                value={analise?.lucroBruto === null || analise?.lucroBruto === undefined
+                  ? '—'
+                  : brl(analise.lucroBruto)}
+                hint="Preço − custo da ficha"
+                variant={analise?.lucroBruto !== null && Number(analise?.lucroBruto) > 0 ? 'success' : 'info'}
+              />
+              <Card title="Preço Sugerido" value="Em breve" hint="Cálculo em desenvolvimento" variant="info" />
+              <Card title="Preço iFood" value="Em breve" hint="Cálculo em desenvolvimento" variant="info" />
+            </div>
+
+            {semFicha ? (
+              <div className="alert alert-gray" style={{ marginTop: 12 }}>
+                <div className="alert-msg">
+                  Este produto ainda não possui ficha técnica cadastrada. Adicione o primeiro insumo abaixo.
+                </div>
+              </div>
+            ) : (
+              analise?.mensagemDiagnostico && (
+                <div className={'alert ' + (STATUS_ALERT[status] ?? 'alert-gray')} style={{ marginTop: 12 }}>
+                  <div className="alert-msg">{analise.mensagemDiagnostico}</div>
+                </div>
+              )
+            )}
+
+            {/* Seção 3 — Itens da ficha técnica */}
+            <div className="section-title">Adicionar Insumo</div>
+            <div className="card">
+              <form onSubmit={handleAddItem}>
+                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                  <div className="form-group" style={{ marginBottom: 0, flex: 2, minWidth: 200 }}>
+                    <label className="form-label">Insumo</label>
+                    <select
+                      className="form-input"
+                      value={formInsumoId}
+                      onChange={(e) => setFormInsumoId(e.target.value)}
+                    >
+                      <option value="">— selecione —</option>
+                      {insumos.map((i) => (
+                        <option key={i.id} value={i.id}>
+                          {i.nome} ({brl(i.custoUnitario)} / {i.unidade})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 110 }}>
+                    <label className="form-label">Quantidade</label>
+                    <input
+                      className="form-input"
+                      type="number"
+                      min="0"
+                      step="0.0001"
+                      value={formQty}
+                      onChange={(e) => setFormQty(e.target.value)}
+                      placeholder="0"
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0, flex: 0.7, minWidth: 80 }}>
+                    <label className="form-label">Unidade</label>
+                    <div
+                      className="form-input"
+                      style={{ background: '#fafafa', color: '#888', display: 'flex', alignItems: 'center' }}
+                    >
+                      {(() => {
+                        const i = insumos.find((x) => String(x.id) === formInsumoId)
+                        return i ? i.unidade : '—'
+                      })()}
+                    </div>
+                  </div>
+                  <button type="submit" className="btn btn-primary" disabled={itemSubmitting}>
+                    {itemSubmitting ? 'Adicionando…' : 'Adicionar item'}
+                  </button>
+                </div>
+                {itemError && (
+                  <div className="alert alert-red" style={{ marginTop: 12, marginBottom: 0 }}>
+                    <div className="alert-msg clr-red">{itemError}</div>
+                  </div>
+                )}
+                {insumos.length === 0 && (
+                  <div className="alert alert-yellow" style={{ marginTop: 12, marginBottom: 0 }}>
+                    <div className="alert-msg clr-yellow">
+                      Nenhum insumo ativo cadastrado. Cadastre insumos antes de montar a ficha.
+                    </div>
+                  </div>
+                )}
+              </form>
+            </div>
+
+            <div className="section-title">Itens da Ficha</div>
+
+            {itens.length === 0 ? (
+              <div className="empty-state">
+                Ficha técnica vazia. Adicione o primeiro insumo no formulário acima — assim que houver
+                pelo menos um item, o CMV e a margem serão recalculados.
+              </div>
+            ) : (
+              <>
+                <div className="table-card">
+                  <table className="hb-table">
+                    <thead>
+                      <tr>
+                        <th>Insumo</th>
+                        <th>Unidade</th>
+                        <th>Custo unitário</th>
+                        <th>Quantidade</th>
+                        <th>Custo aplicado</th>
+                        <th style={{ textAlign: 'right' }}>Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {itens.map((item) => {
+                        const isEditing = editingItemId === item.id
+                        const custoUnit = Number(item.insumo.custoUnitario)
+                        const qty = isEditing ? Number(editingQty) : Number(item.quantidade)
+                        const custoItemAtual = qty > 0 ? qty * custoUnit : 0
+
+                        return (
+                          <tr key={item.id} style={isEditing ? { background: '#fff7ed' } : undefined}>
+                            <td style={{ fontWeight: 500, color: '#111' }}>{item.insumo.nome}</td>
+                            <td style={{ color: '#888' }}>{item.insumo.unidade}</td>
+                            <td>{brl(custoUnit)}</td>
+                            <td>
+                              {isEditing ? (
+                                <input
+                                  className="form-input"
+                                  style={{ ...cellInputStyle, width: 110 }}
+                                  type="number"
+                                  min="0"
+                                  step="0.0001"
+                                  value={editingQty}
+                                  onChange={(e) => setEditingQty(e.target.value)}
+                                  autoFocus
+                                />
+                              ) : (
+                                <strong>{num(item.quantidade)}</strong>
+                              )}
+                            </td>
+                            <td className="clr-orange" style={{ fontWeight: 600 }}>
+                              {brl(custoItemAtual)}
+                            </td>
+                            <td style={{ textAlign: 'right' }}>
+                              <div style={{ display: 'inline-flex', gap: 6 }}>
+                                {isEditing ? (
+                                  <>
+                                    <button type="button" className="btn btn-primary" onClick={saveEditItem} disabled={editSubmitting}>
+                                      {editSubmitting ? 'Salvando…' : 'Salvar'}
+                                    </button>
+                                    <button type="button" className="btn btn-secondary" onClick={cancelEditItem} disabled={editSubmitting}>
+                                      Cancelar
+                                    </button>
+                                  </>
+                                ) : (
+                                  <>
+                                    <button type="button" className="btn btn-secondary" onClick={() => startEditItem(item)}>
+                                      Editar
+                                    </button>
+                                    <button type="button" className="btn btn-danger" onClick={() => handleDeleteItem(item)}>
+                                      Remover
+                                    </button>
+                                  </>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                {editError && (
+                  <div className="alert alert-red" style={{ marginTop: 10 }}>
+                    <div className="alert-msg clr-red">{editError}</div>
+                  </div>
+                )}
+
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginTop: 12,
+                    padding: '14px 18px',
+                    background: '#fff',
+                    border: '0.5px solid #e8e8e8',
+                    borderRadius: 12,
+                    fontSize: 13,
+                    color: '#555'
+                  }}
+                >
+                  <span>Custo total da ficha técnica</span>
+                  <strong className="clr-orange" style={{ fontSize: 18 }}>{brl(custoTotal)}</strong>
+                </div>
+              </>
+            )}
+          </>
+        )}
+      </div>
     </div>
   )
 }
