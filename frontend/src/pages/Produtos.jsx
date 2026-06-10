@@ -45,6 +45,27 @@ const CMV_COLOR_CLASS = {
   CRITICO:   'clr-red'
 }
 
+const FORM_BLANK = { nome: '', descricao: '', precoVenda: '' }
+
+function validateForm({ nome, precoVenda }) {
+  if (!nome || nome.trim() === '') return 'nome é obrigatório'
+  if (precoVenda === '' || precoVenda === null || precoVenda === undefined) {
+    return 'preço de venda é obrigatório'
+  }
+  const v = Number(precoVenda)
+  if (!Number.isFinite(v)) return 'preço de venda deve ser numérico'
+  if (v < 0) return 'preço de venda deve ser maior ou igual a zero'
+  return null
+}
+
+function payloadFromForm(form) {
+  return {
+    nome: form.nome.trim(),
+    descricao: form.descricao.trim() === '' ? null : form.descricao.trim(),
+    precoVenda: Number(form.precoVenda)
+  }
+}
+
 const metricRowStyle = {
   display: 'flex',
   justifyContent: 'space-between',
@@ -68,6 +89,15 @@ export default function Produtos() {
   const [produtos, setProdutos] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+
+  const [formOpen, setFormOpen] = useState(false)
+  const [editingId, setEditingId] = useState(null)
+  const [form, setForm] = useState(FORM_BLANK)
+  const [formError, setFormError] = useState(null)
+  const [submitting, setSubmitting] = useState(false)
+
+  const [deletingId, setDeletingId] = useState(null)
+  const [feedback, setFeedback] = useState(null)
 
   function load() {
     setLoading(true)
@@ -95,6 +125,76 @@ export default function Produtos() {
   }
 
   useEffect(() => { load() }, [])
+
+  function openCreate() {
+    setEditingId(null)
+    setForm(FORM_BLANK)
+    setFormError(null)
+    setFeedback(null)
+    setFormOpen(true)
+  }
+
+  function openEdit(p) {
+    setEditingId(p.id)
+    setForm({
+      nome: p.nome ?? '',
+      descricao: p.descricao ?? '',
+      precoVenda:
+        p.precoVenda === null || p.precoVenda === undefined ? '' : String(Number(p.precoVenda))
+    })
+    setFormError(null)
+    setFeedback(null)
+    setFormOpen(true)
+  }
+
+  function closeForm() {
+    setFormOpen(false)
+    setEditingId(null)
+    setForm(FORM_BLANK)
+    setFormError(null)
+  }
+
+  function handleSubmit(e) {
+    e.preventDefault()
+    const err = validateForm(form)
+    if (err) { setFormError(err); return }
+    setFormError(null)
+    setSubmitting(true)
+
+    const request = editingId === null
+      ? api.post('/produtos', payloadFromForm(form))
+      : api.put(`/produtos/${editingId}`, payloadFromForm(form))
+
+    request
+      .then(() => {
+        setFeedback(editingId === null
+          ? 'Produto criado com sucesso.'
+          : 'Produto atualizado com sucesso.')
+        closeForm()
+        load()
+      })
+      .catch((e) =>
+        setFormError(e?.response?.data?.error ?? e?.message ?? 'Erro ao salvar produto.')
+      )
+      .finally(() => setSubmitting(false))
+  }
+
+  function handleDelete(p) {
+    const ok = window.confirm('Tem certeza que deseja inativar este produto?')
+    if (!ok) return
+    setDeletingId(p.id)
+    setFeedback(null)
+    api
+      .delete(`/produtos/${p.id}`)
+      .then(() => {
+        setFeedback(`Produto "${p.nome}" inativado.`)
+        load()
+      })
+      .catch((e) =>
+        window.alert(e?.response?.data?.error ?? e?.message ?? 'Erro ao inativar produto.')
+      )
+      .finally(() => setDeletingId(null))
+  }
 
   if (loading) {
     return <div className="loading-state">Carregando produtos…</div>
@@ -131,8 +231,74 @@ export default function Produtos() {
             Cadastro de produtos, ficha técnica, CMV e precificação.
           </div>
         </div>
-        <span className="badge badge-orange">Precificação</span>
+        <button type="button" className="btn btn-primary" onClick={openCreate}>
+          + Novo produto
+        </button>
       </div>
+
+      {feedback && (
+        <div className="alert alert-green" style={{ marginBottom: 12 }}>
+          <div className="alert-msg clr-green">{feedback}</div>
+        </div>
+      )}
+
+      {formOpen && (
+        <div className="modal-overlay">
+          <div className="modal">
+            <div className="modal-title">
+              {editingId === null ? 'Novo produto' : 'Editar produto'}
+            </div>
+            <form onSubmit={handleSubmit}>
+              <div className="form-group" style={{ marginBottom: 12 }}>
+                <label className="form-label">Nome</label>
+                <input
+                  className="form-input"
+                  type="text"
+                  value={form.nome}
+                  onChange={(e) => setForm({ ...form, nome: e.target.value })}
+                  placeholder="X-Burger Especial"
+                  autoFocus
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: 12 }}>
+                <label className="form-label">Descrição (opcional)</label>
+                <input
+                  className="form-input"
+                  type="text"
+                  value={form.descricao}
+                  onChange={(e) => setForm({ ...form, descricao: e.target.value })}
+                  placeholder="Pão, blend 160g, queijo..."
+                />
+              </div>
+              <div className="form-group" style={{ marginBottom: 0 }}>
+                <label className="form-label">Preço de venda (R$)</label>
+                <input
+                  className="form-input"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={form.precoVenda}
+                  onChange={(e) => setForm({ ...form, precoVenda: e.target.value })}
+                  placeholder="0,00"
+                />
+              </div>
+              {formError && (
+                <div className="alert alert-red" style={{ marginTop: 12, marginBottom: 0 }}>
+                  <div className="alert-msg clr-red">{formError}</div>
+                </div>
+              )}
+              <div className="modal-actions">
+                <button type="button" className="btn btn-secondary" onClick={closeForm} disabled={submitting}>
+                  Cancelar
+                </button>
+                <button type="submit" className="btn btn-primary" disabled={submitting}>
+                  {submitting ? 'Salvando…' : 'Salvar produto'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       <div className="section-title">Resumo</div>
       <div className="grid-4" style={{ marginBottom: 4 }}>
@@ -166,7 +332,7 @@ export default function Produtos() {
 
       {totalAtivos === 0 ? (
         <div className="empty-state">
-          Nenhum produto cadastrado. Cadastre um produto e a ficha técnica para começar a acompanhar o CMV.
+          Nenhum produto cadastrado. Use o botão “+ Novo produto” para cadastrar o primeiro e montar a ficha técnica.
         </div>
       ) : (
         <div className="grid-3">
@@ -235,10 +401,21 @@ export default function Produtos() {
                   </div>
                 )}
 
-                <div style={{ marginTop: 12 }}>
+                <div style={{ marginTop: 12, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                   <Link to={`/ficha-tecnica/${p.id}`} className="btn btn-primary">
                     Abrir ficha
                   </Link>
+                  <button type="button" className="btn btn-secondary" onClick={() => openEdit(p)}>
+                    Editar
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-danger"
+                    onClick={() => handleDelete(p)}
+                    disabled={deletingId === p.id}
+                  >
+                    {deletingId === p.id ? 'Inativando…' : 'Inativar'}
+                  </button>
                 </div>
               </div>
             )
