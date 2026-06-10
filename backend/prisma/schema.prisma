@@ -138,15 +138,21 @@ model FichaTecnicaItem {
 // Configuração global de precificação
 // ============================================================
 model ConfiguracaoPrecificacao {
-  id                      Int      @id @default(autoincrement())
-  cmvAlvoPercentual       Decimal  @db.Decimal(10, 2) @default(32.00)
-  taxaIfoodPercentual     Decimal  @db.Decimal(10, 2) @default(23.00)
-  campanhaIfoodPercentual Decimal  @db.Decimal(10, 2) @default(10.00)
-  custoFixoIfood          Decimal  @db.Decimal(10, 2) @default(0.00)
-  produtosPorPedidoIfood  Decimal  @db.Decimal(10, 2) @default(2.00)
-  ativo                   Boolean  @default(true)
-  criadoEm                DateTime @default(now())
-  atualizadoEm            DateTime @updatedAt
+  id                              Int      @id @default(autoincrement())
+  cmvAlvoPercentual               Decimal  @db.Decimal(10, 2) @default(32.00)
+  taxaIfoodPercentual             Decimal  @db.Decimal(10, 2) @default(23.00)
+  taxaPagamentoOnlinePercentual   Decimal  @db.Decimal(10, 2) @default(0.00)
+  taxaRepasseAntecipadoPercentual Decimal  @db.Decimal(10, 2) @default(0.00)
+  campanhaIfoodPercentual         Decimal  @db.Decimal(10, 2) @default(10.00)
+  maiorTaxaEntrega                Decimal  @db.Decimal(10, 2) @default(0.00)
+  cupomDesconto                   Decimal  @db.Decimal(10, 2) @default(0.00)
+  ticketMedioDelivery             Decimal  @db.Decimal(10, 2) @default(40.00)
+  // Legado da V1 (não usados na fórmula atual do preço iFood)
+  custoFixoIfood                  Decimal  @db.Decimal(10, 2) @default(0.00)
+  produtosPorPedidoIfood          Decimal  @db.Decimal(10, 2) @default(2.00)
+  ativo                           Boolean  @default(true)
+  criadoEm                        DateTime @default(now())
+  atualizadoEm                    DateTime @updatedAt
 
   @@index([ativo])
 }

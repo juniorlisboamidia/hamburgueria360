@@ -856,7 +856,7 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                 value={analise?.precoIfood === null || analise?.precoIfood === undefined
                   ? 'Pendente'
                   : brl(analise.precoIfood)}
-                hint="Com taxa, campanha e custo fixo"
+                hint="Baseado no preço de venda"
                 variant="brand"
               />
             </div>
@@ -918,13 +918,20 @@ function FichaModal({ produtoId, onClose, onChanged }) {
               </div>
               <div className="card">
                 <div className="card-label">iFood</div>
+                <MetricRow label="Preço de venda (base)">
+                  <span style={{ fontWeight: 600 }}>{brl(analise?.precoVenda)}</span>
+                </MetricRow>
                 <MetricRow label="Taxa iFood">{pct(analise?.taxaIfoodPercentual)}</MetricRow>
+                <MetricRow label="Taxa pagamento online">{pct(analise?.taxaPagamentoOnlinePercentual)}</MetricRow>
+                <MetricRow label="Taxa repasse antecipado">{pct(analise?.taxaRepasseAntecipadoPercentual)}</MetricRow>
                 <MetricRow label="Campanha iFood">{pct(analise?.campanhaIfoodPercentual)}</MetricRow>
                 <MetricRow label="Percentual total">{pct(analise?.percentualIfoodTotal)}</MetricRow>
-                <MetricRow label="Custo fixo iFood">{brl(analise?.custoFixoIfood)}</MetricRow>
-                <MetricRow label="Produtos por pedido">{num(analise?.produtosPorPedidoIfood)}</MetricRow>
-                <MetricRow label="Custo fixo por produto">{brl(analise?.custoFixoIfoodPorProduto)}</MetricRow>
-                <MetricRow label="Preço iFood">
+                <MetricRow label="Maior taxa de entrega">{brl(analise?.maiorTaxaEntrega)}</MetricRow>
+                <MetricRow label="Cupom de desconto">{brl(analise?.cupomDesconto)}</MetricRow>
+                <MetricRow label="Ticket médio delivery">{brl(analise?.ticketMedioDelivery)}</MetricRow>
+                <MetricRow label="Preço base com taxas">{brl(analise?.precoIfoodBaseTaxas)}</MetricRow>
+                <MetricRow label="Entrega/cupom rateado">{brl(analise?.valorEntregaCupomRateado)}</MetricRow>
+                <MetricRow label="Preço iFood final">
                   <span style={{ fontWeight: 600 }} className="clr-orange">
                     {analise?.precoIfood === null || analise?.precoIfood === undefined
                       ? 'Pendente'
@@ -941,7 +948,8 @@ function FichaModal({ produtoId, onClose, onChanged }) {
             <div className="alert alert-gray" style={{ marginTop: 8 }}>
               <div className="alert-msg">
                 Preço sugerido usa margem sobre ingredientes e soma custos embutidos sem overprice.
-                Preço iFood considera taxa, campanha e custo fixo rateado por produto.
+                Preço iFood usa o preço de venda definido no produto e considera taxas, campanha,
+                entrega/cupom e ticket médio delivery.
               </div>
             </div>
 
