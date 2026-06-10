@@ -114,6 +114,7 @@ export default function Produtos() {
   const [feedback, setFeedback] = useState(null)
 
   const [fichaProdutoId, setFichaProdutoId] = useState(null)
+  const [configOpen, setConfigOpen] = useState(false)
 
   function fetchProdutos() {
     return api
@@ -238,9 +239,14 @@ export default function Produtos() {
             Cadastro de produtos, ficha técnica, CMV e precificação.
           </div>
         </div>
-        <button type="button" className="btn btn-primary" onClick={openCreate}>
-          + Novo produto
-        </button>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button type="button" className="btn btn-secondary" onClick={() => { setFeedback(null); setConfigOpen(true) }}>
+            Configurar precificação
+          </button>
+          <button type="button" className="btn btn-primary" onClick={openCreate}>
+            + Novo produto
+          </button>
+        </div>
       </div>
 
       {feedback && (
@@ -310,6 +316,17 @@ export default function Produtos() {
           produtoId={fichaProdutoId}
           onClose={() => setFichaProdutoId(null)}
           onChanged={refresh}
+        />
+      )}
+
+      {configOpen && (
+        <ConfigPrecificacaoModal
+          onClose={() => setConfigOpen(false)}
+          onSaved={() => {
+            setConfigOpen(false)
+            setFeedback('Configuração de precificação salva. Preços recalculados.')
+            load()
+          }}
         />
       )}
 
@@ -440,6 +457,218 @@ export default function Produtos() {
           })}
         </div>
       )}
+    </div>
+  )
+}
+
+// ============ Modal: configuração de precificação ============
+
+const CONFIG_FIELDS = [
+  'cmvAlvoPercentual',
+  'taxaIfoodPercentual',
+  'taxaPagamentoOnlinePercentual',
+  'taxaRepasseAntecipadoPercentual',
+  'campanhaIfoodPercentual',
+  'maiorTaxaEntrega',
+  'cupomDesconto',
+  'ticketMedioDelivery'
+]
+
+function validateConfigForm(form) {
+  for (const f of CONFIG_FIELDS) {
+    if (form[f] === '' || !Number.isFinite(Number(form[f]))) {
+      return 'Todos os campos são obrigatórios e devem ser numéricos.'
+    }
+  }
+  const cmv = Number(form.cmvAlvoPercentual)
+  if (cmv <= 0 || cmv >= 100) return 'CMV alvo deve ser maior que 0 e menor que 100.'
+  const pcts = [
+    Number(form.taxaIfoodPercentual),
+    Number(form.taxaPagamentoOnlinePercentual),
+    Number(form.taxaRepasseAntecipadoPercentual),
+    Number(form.campanhaIfoodPercentual)
+  ]
+  if (pcts.some((p) => p < 0)) return 'Os percentuais iFood devem ser maiores ou iguais a zero.'
+  if (pcts.reduce((s, p) => s + p, 0) >= 100) {
+    return 'A soma dos percentuais iFood deve ser menor que 100.'
+  }
+  if (Number(form.maiorTaxaEntrega) < 0) return 'Maior taxa de entrega deve ser maior ou igual a zero.'
+  if (Number(form.cupomDesconto) < 0) return 'Cupom de desconto deve ser maior ou igual a zero.'
+  if (Number(form.ticketMedioDelivery) <= 0) return 'Ticket médio delivery deve ser maior que zero.'
+  return null
+}
+
+function ConfigPrecificacaoModal({ onClose, onSaved }) {
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [form, setForm] = useState(null)
+  const [formError, setFormError] = useState(null)
+  const [saving, setSaving] = useState(false)
+
+  function loadConfig() {
+    setLoading(true)
+    setError(null)
+    api
+      .get('/configuracao-precificacao')
+      .then((r) => {
+        const c = r.data
+        const toStr = (v) => (v === null || v === undefined ? '' : String(Number(v)))
+        setForm({
+          cmvAlvoPercentual: toStr(c.cmvAlvoPercentual),
+          taxaIfoodPercentual: toStr(c.taxaIfoodPercentual),
+          taxaPagamentoOnlinePercentual: toStr(c.taxaPagamentoOnlinePercentual),
+          taxaRepasseAntecipadoPercentual: toStr(c.taxaRepasseAntecipadoPercentual),
+          campanhaIfoodPercentual: toStr(c.campanhaIfoodPercentual),
+          maiorTaxaEntrega: toStr(c.maiorTaxaEntrega),
+          cupomDesconto: toStr(c.cupomDesconto),
+          ticketMedioDelivery: toStr(c.ticketMedioDelivery)
+        })
+        setLoading(false)
+      })
+      .catch((err) => {
+        setError(
+          err?.response?.data?.error ??
+          (err?.code === 'ERR_NETWORK'
+            ? 'Não foi possível conectar ao backend (http://localhost:4000).'
+            : err?.message ?? 'Erro inesperado.')
+        )
+        setLoading(false)
+      })
+  }
+
+  useEffect(() => { loadConfig() }, [])
+
+  function handleSave(e) {
+    e.preventDefault()
+    const err = validateConfigForm(form)
+    if (err) { setFormError(err); return }
+    setFormError(null)
+    setSaving(true)
+    const payload = Object.fromEntries(CONFIG_FIELDS.map((f) => [f, Number(form[f])]))
+    api
+      .put('/configuracao-precificacao', payload)
+      .then(() => onSaved())
+      .catch((e) =>
+        setFormError(e?.response?.data?.error ?? e?.message ?? 'Erro ao salvar configuração.')
+      )
+      .finally(() => setSaving(false))
+  }
+
+  const numOrZero = (v) => (Number.isFinite(Number(v)) && v !== '' ? Number(v) : 0)
+  const percentualTotal = form
+    ? numOrZero(form.taxaIfoodPercentual) +
+      numOrZero(form.taxaPagamentoOnlinePercentual) +
+      numOrZero(form.taxaRepasseAntecipadoPercentual) +
+      numOrZero(form.campanhaIfoodPercentual)
+    : 0
+  const entregaCupomTotal = form
+    ? numOrZero(form.maiorTaxaEntrega) + numOrZero(form.cupomDesconto)
+    : 0
+
+  const fieldDef = [
+    ['taxaIfoodPercentual', 'Taxa iFood (%)'],
+    ['taxaPagamentoOnlinePercentual', 'Taxa pagamento online (%)'],
+    ['taxaRepasseAntecipadoPercentual', 'Taxa repasse antecipado (%)'],
+    ['campanhaIfoodPercentual', 'Campanha iFood (%)'],
+    ['maiorTaxaEntrega', 'Maior taxa de entrega (R$)'],
+    ['cupomDesconto', 'Cupom de desconto (R$)'],
+    ['ticketMedioDelivery', 'Ticket médio delivery (R$)']
+  ]
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal" style={{ maxWidth: 560 }}>
+        <div className="modal-title">Configuração de precificação</div>
+        <div style={{ fontSize: 12.5, color: '#999', marginTop: -10, marginBottom: 14 }}>
+          Defina os parâmetros usados para calcular preço sugerido e preço iFood.
+        </div>
+
+        {loading ? (
+          <div className="loading-state">Carregando configuração…</div>
+        ) : error ? (
+          <div className="alert alert-red">
+            <div>
+              <div className="alert-title clr-red">Não foi possível carregar a configuração</div>
+              <div className="alert-msg">{error}</div>
+              <div style={{ marginTop: 10 }}>
+                <button type="button" className="btn btn-secondary" onClick={loadConfig}>
+                  Tentar novamente
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <form onSubmit={handleSave}>
+            <div className="section-title" style={{ marginTop: 0 }}>Venda Direta</div>
+            <div className="form-group" style={{ marginBottom: 6 }}>
+              <label className="form-label">CMV alvo (%)</label>
+              <input
+                className="form-input"
+                type="number"
+                min="0"
+                step="0.01"
+                value={form.cmvAlvoPercentual}
+                onChange={(e) => setForm({ ...form, cmvAlvoPercentual: e.target.value })}
+                autoFocus
+              />
+            </div>
+            <div style={{ fontSize: 11.5, color: '#999', marginBottom: 12 }}>
+              Usado para calcular o preço sugerido com base no custo com margem e custos embutidos.
+            </div>
+
+            <div className="section-title">iFood</div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              {fieldDef.map(([campo, label]) => (
+                <div key={campo} className="form-group" style={{ marginBottom: 0 }}>
+                  <label className="form-label">{label}</label>
+                  <input
+                    className="form-input"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={form[campo]}
+                    onChange={(e) => setForm({ ...form, [campo]: e.target.value })}
+                  />
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize: 11.5, color: '#999', marginTop: 10 }}>
+              O preço iFood usa o preço de venda definido no produto e considera taxas, campanha,
+              entrega/cupom e ticket médio delivery.
+            </div>
+
+            <div
+              className="alert alert-gray"
+              style={{ marginTop: 12, marginBottom: 0, display: 'flex', gap: 20 }}
+            >
+              <div className="alert-msg">
+                Percentual total iFood:{' '}
+                <strong className={percentualTotal >= 100 ? 'clr-red' : 'clr-orange'}>
+                  {pct(percentualTotal)}
+                </strong>
+              </div>
+              <div className="alert-msg">
+                Entrega/cupom total: <strong className="clr-orange">{brl(entregaCupomTotal)}</strong>
+              </div>
+            </div>
+
+            {formError && (
+              <div className="alert alert-red" style={{ marginTop: 12, marginBottom: 0 }}>
+                <div className="alert-msg clr-red">{formError}</div>
+              </div>
+            )}
+
+            <div className="modal-actions">
+              <button type="button" className="btn btn-secondary" onClick={onClose} disabled={saving}>
+                Cancelar
+              </button>
+              <button type="submit" className="btn btn-primary" disabled={saving}>
+                {saving ? 'Salvando…' : 'Salvar configuração'}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
     </div>
   )
 }
