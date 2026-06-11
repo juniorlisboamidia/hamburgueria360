@@ -84,6 +84,9 @@ function validateForm(form) {
     return 'unidade é obrigatória (Kg, L ou Und)'
   }
 
+  // Produção própria: custo não é obrigatório — será calculado pela receita
+  if (tipo === 'PRODUCAO_PROPRIA') return null
+
   if (unidade === 'Und' && modoCusto === 'CAIXA') {
     const v = Number(valorCaixa)
     if (valorCaixa === '' || !Number.isFinite(v) || v <= 0) {
@@ -112,10 +115,16 @@ function validateForm(form) {
 }
 
 function payloadFromForm(form) {
-  const custoUnitario =
-    form.unidade === 'Und' && form.modoCusto === 'CAIXA'
-      ? custoCaixaCalculado(form)
-      : Number(form.custoUnitario)
+  let custoUnitario
+  if (form.tipo === 'PRODUCAO_PROPRIA') {
+    // Criação: 0 (a calcular pela receita). Edição: preserva o custo já calculado,
+    // que foi carregado no formulário ao abrir.
+    custoUnitario = form.custoUnitario === '' ? 0 : Number(form.custoUnitario)
+  } else if (form.unidade === 'Und' && form.modoCusto === 'CAIXA') {
+    custoUnitario = custoCaixaCalculado(form)
+  } else {
+    custoUnitario = Number(form.custoUnitario)
+  }
   return {
     nome: form.nome.trim(),
     tipo: form.tipo,
@@ -140,6 +149,7 @@ export default function Insumos() {
   const [submitting, setSubmitting] = useState(false)
 
   const [deletingId, setDeletingId] = useState(null)
+  const [insumoParaExcluir, setInsumoParaExcluir] = useState(null)
   const [receitaInsumoId, setReceitaInsumoId] = useState(null)
 
   function load() {
@@ -233,24 +243,30 @@ export default function Insumos() {
   }
 
   function handleDelete(insumo) {
-    const ok = window.confirm(
-      `Inativar o insumo "${insumo.nome}"? Ele não aparecerá mais nas fichas técnicas, mas o histórico será preservado.`
-    )
-    if (!ok) return
+    setInsumoParaExcluir(insumo)
+  }
+
+  // "Excluir" na UI = exclusão lógica (soft delete) no backend, preservando histórico
+  function confirmExcluirInsumo() {
+    const insumo = insumoParaExcluir
+    if (!insumo) return
     setDeletingId(insumo.id)
     api
       .delete(`/insumos/${insumo.id}`)
       .then(() => {
-        setToast({ message: `Insumo "${insumo.nome}" inativado.`, type: 'success' })
+        setToast({ message: 'Insumo excluído com sucesso.', type: 'success' })
         load()
       })
       .catch((e) =>
         setToast({
-          message: e?.response?.data?.error ?? e?.message ?? 'Erro ao inativar insumo.',
+          message: e?.response?.data?.error ?? e?.message ?? 'Erro ao excluir insumo.',
           type: 'error'
         })
       )
-      .finally(() => setDeletingId(null))
+      .finally(() => {
+        setDeletingId(null)
+        setInsumoParaExcluir(null)
+      })
   }
 
   const filtered = useMemo(() => {
@@ -310,6 +326,21 @@ export default function Insumos() {
         onClose={() => setToast(null)}
       />
 
+      <ConfirmDialog
+        open={insumoParaExcluir !== null}
+        title="Excluir insumo?"
+        message={
+          insumoParaExcluir ? `Você está prestes a excluir "${insumoParaExcluir.nome}".` : ''
+        }
+        description="Este insumo não aparecerá mais para novos usos, mas o histórico será preservado."
+        confirmLabel="Excluir insumo"
+        cancelLabel="Cancelar"
+        variant="danger"
+        loading={deletingId !== null}
+        onConfirm={confirmExcluirInsumo}
+        onCancel={() => setInsumoParaExcluir(null)}
+      />
+
       {modalOpen && (
         <div className="modal-overlay">
           <div className="modal">
@@ -356,7 +387,7 @@ export default function Insumos() {
                     <option value="Und">Und</option>
                   </select>
                 </div>
-                {form.unidade !== 'Und' && (
+                {form.tipo !== 'PRODUCAO_PROPRIA' && form.unidade !== 'Und' && (
                   <div className="form-group" style={{ marginBottom: 12, flex: 1 }}>
                     <label className="form-label">
                       {form.unidade === 'Kg'
@@ -377,20 +408,32 @@ export default function Insumos() {
                   </div>
                 )}
               </div>
-              {form.unidade === 'Kg' && (
+              {form.tipo === 'PRODUCAO_PROPRIA' && (
+                <div className="alert alert-gray" style={{ marginTop: -2, marginBottom: 12, padding: '8px 12px' }}>
+                  <div className="alert-msg">
+                    O custo deste item será calculado pela receita de produção própria.{' '}
+                    Custo atual calculado:{' '}
+                    <strong className="clr-orange">
+                      {brl(form.custoUnitario === '' ? 0 : Number(form.custoUnitario))}
+                    </strong>
+                  </div>
+                </div>
+              )}
+
+              {form.tipo !== 'PRODUCAO_PROPRIA' && form.unidade === 'Kg' && (
                 <div style={{ fontSize: 11.5, color: '#999', marginTop: -6, marginBottom: 12 }}>
                   Informe o custo de 1 kg. Na ficha técnica e nas receitas, as quantidades serão
                   lançadas em gramas.
                 </div>
               )}
-              {form.unidade === 'L' && (
+              {form.tipo !== 'PRODUCAO_PROPRIA' && form.unidade === 'L' && (
                 <div style={{ fontSize: 11.5, color: '#999', marginTop: -6, marginBottom: 12 }}>
                   Informe o custo de 1 litro. Na ficha técnica e nas receitas, as quantidades serão
                   lançadas em ml.
                 </div>
               )}
 
-              {form.unidade === 'Und' && (
+              {form.tipo !== 'PRODUCAO_PROPRIA' && form.unidade === 'Und' && (
                 <>
                   <div className="form-group" style={{ marginBottom: 12 }}>
                     <label className="form-label">Como deseja informar o custo?</label>
@@ -597,7 +640,13 @@ export default function Insumos() {
                     <span className={'badge ' + tipoBadge(i.tipo)}>{tipoLabel(i.tipo)}</span>
                   </td>
                   <td>{i.unidade}</td>
-                  <td>{brl(i.custoUnitario)}</td>
+                  <td>
+                    {i.tipo === 'PRODUCAO_PROPRIA' && Number(i.custoUnitario) === 0 ? (
+                      <span className="badge badge-yellow">A calcular</span>
+                    ) : (
+                      brl(i.custoUnitario)
+                    )}
+                  </td>
                   <td className={i.fornecedor ? '' : 'clr-muted'}>
                     {i.fornecedor || 'Sem fornecedor'}
                   </td>
@@ -621,7 +670,7 @@ export default function Insumos() {
                         onClick={() => handleDelete(i)}
                         disabled={deletingId === i.id}
                       >
-                        {deletingId === i.id ? 'Inativando…' : 'Inativar'}
+                        {deletingId === i.id ? 'Excluindo…' : 'Excluir'}
                       </button>
                     </div>
                   </td>

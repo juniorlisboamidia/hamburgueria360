@@ -89,24 +89,43 @@ app.post('/api/insumos', async (req, res) => {
     if (!unidadeNormalizada) {
       return res.status(400).json({ error: 'Unidade inválida. Use Kg, L ou Und.' });
     }
-    if (custoUnitario === undefined || custoUnitario === null || isNaN(Number(custoUnitario))) {
-      return res.status(400).json({ error: 'custoUnitario é obrigatório e deve ser numérico' });
-    }
-    if (Number(custoUnitario) < 0) {
-      return res.status(400).json({ error: 'custoUnitario deve ser maior ou igual a zero' });
-    }
     if (tipo !== undefined && tipo !== null && !TIPOS_INSUMO.includes(tipo)) {
       return res.status(400).json({
         error: `tipo inválido. Tipos permitidos: ${TIPOS_INSUMO.join(', ')}`
       });
     }
 
+    // Produção própria nasce com custo 0 (calculado depois pela receita);
+    // demais tipos exigem custo informado e maior que zero.
+    const tipoFinal = tipo ?? 'INGREDIENTE';
+    let custoUnitarioFinal;
+    if (tipoFinal === 'PRODUCAO_PROPRIA') {
+      if (custoUnitario === undefined || custoUnitario === null || custoUnitario === '') {
+        custoUnitarioFinal = 0;
+      } else if (isNaN(Number(custoUnitario)) || Number(custoUnitario) < 0) {
+        return res.status(400).json({ error: 'custoUnitario inválido' });
+      } else {
+        custoUnitarioFinal = Number(custoUnitario);
+      }
+    } else {
+      if (
+        custoUnitario === undefined ||
+        custoUnitario === null ||
+        custoUnitario === '' ||
+        isNaN(Number(custoUnitario)) ||
+        Number(custoUnitario) <= 0
+      ) {
+        return res.status(400).json({ error: 'Informe um custo unitário maior que zero.' });
+      }
+      custoUnitarioFinal = Number(custoUnitario);
+    }
+
     const insumo = await prisma.insumo.create({
       data: {
         nome: nome.trim(),
-        tipo: tipo ?? 'INGREDIENTE',
+        tipo: tipoFinal,
         unidade: unidadeNormalizada,
-        custoUnitario: Number(custoUnitario),
+        custoUnitario: custoUnitarioFinal,
         fornecedor: fornecedor ? String(fornecedor).trim() : null,
         ativo: true
       }
@@ -156,11 +175,25 @@ app.put('/api/insumos/:id', async (req, res) => {
       data.unidade = unidadeNormalizada;
     }
     if (custoUnitario !== undefined) {
-      if (custoUnitario === null || isNaN(Number(custoUnitario))) {
-        return res.status(400).json({ error: 'custoUnitario inválido' });
-      }
-      if (Number(custoUnitario) < 0) {
-        return res.status(400).json({ error: 'custoUnitario deve ser maior ou igual a zero' });
+      // Regra por tipo final: produção própria aceita 0 (custo vem da receita);
+      // demais tipos exigem custo maior que zero. Se não enviado, preserva o atual.
+      const tipoFinal = data.tipo ?? existing.tipo;
+      if (tipoFinal === 'PRODUCAO_PROPRIA') {
+        if (custoUnitario === null || custoUnitario === '' || isNaN(Number(custoUnitario))) {
+          return res.status(400).json({ error: 'custoUnitario inválido' });
+        }
+        if (Number(custoUnitario) < 0) {
+          return res.status(400).json({ error: 'custoUnitario deve ser maior ou igual a zero' });
+        }
+      } else {
+        if (
+          custoUnitario === null ||
+          custoUnitario === '' ||
+          isNaN(Number(custoUnitario)) ||
+          Number(custoUnitario) <= 0
+        ) {
+          return res.status(400).json({ error: 'Informe um custo unitário maior que zero.' });
+        }
       }
       data.custoUnitario = Number(custoUnitario);
     }
