@@ -28,15 +28,20 @@ function num(value) {
   return qtyFormatter.format(Number(value))
 }
 
-// Unidades padronizadas: Kg (custo por kg, quantidades da ficha em gramas) e Und (por unidade)
+// Unidades padronizadas: Kg (custo por kg, quantidades da ficha em gramas),
+// L (custo por litro, quantidades em ml) e Und (por unidade)
 function unidadeNormalizada(u) {
   const v = String(u ?? '').trim().toLowerCase()
   if (['kg', 'kgs', 'kilo', 'quilo', 'quilograma'].includes(v)) return 'Kg'
+  if (['l', 'lt', 'litro', 'litros'].includes(v)) return 'L'
   if (['und', 'un', 'u', 'unid', 'unidade', 'unidades'].includes(v)) return 'Und'
   return null
 }
 function sufixoQuantidade(unidadeInsumo) {
-  return unidadeNormalizada(unidadeInsumo) === 'Kg' ? 'g' : 'und'
+  const u = unidadeNormalizada(unidadeInsumo)
+  if (u === 'Kg') return 'g'
+  if (u === 'L') return 'ml'
+  return 'und'
 }
 
 // Alertas informativos da ficha técnica (heurísticas de revisão — não bloqueiam nada)
@@ -64,11 +69,18 @@ function buildAlertasFicha(analise, itens) {
   for (const item of itens ?? []) {
     const nome = item.insumo?.nome ?? 'Insumo'
     const qtd = Number(item.quantidade)
-    if (unidadeNormalizada(item.insumo?.unidade) === 'Kg') {
+    const unidadeItem = unidadeNormalizada(item.insumo?.unidade)
+    if (unidadeItem === 'Kg') {
       if (qtd < 1) {
         alertas.push(`Quantidade muito baixa para insumo em Kg: ${nome} — ${num(qtd)} g.`)
       } else if (qtd >= 1000) {
         alertas.push(`Quantidade alta para insumo em Kg: ${nome} — ${num(qtd)} g.`)
+      }
+    } else if (unidadeItem === 'L') {
+      if (qtd < 1) {
+        alertas.push(`Quantidade muito baixa para insumo em L: ${nome} — ${num(qtd)} ml.`)
+      } else if (qtd >= 1000) {
+        alertas.push(`Quantidade alta para insumo em L: ${nome} — ${num(qtd)} ml.`)
       }
     } else {
       if (qtd > 10) {
@@ -1409,12 +1421,13 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                       {itens.map((item) => {
                         const isEditing = editingItemId === item.id
                         const custoUnit = Number(item.insumo.custoUnitario)
-                        const itemKg = unidadeNormalizada(item.insumo.unidade) === 'Kg'
+                        const unidadeItem = unidadeNormalizada(item.insumo.unidade)
+                        const divideMil = unidadeItem === 'Kg' || unidadeItem === 'L'
 
                         let custoAplicadoExibido
                         if (isEditing && editForm) {
                           const q = Number(editForm.quantidade)
-                          const qBase = itemKg ? q / 1000 : q
+                          const qBase = divideMil ? q / 1000 : q
                           const qa = Number(editForm.quantidadeAtendida)
                           const divisor =
                             editForm.formaRateio !== 'POR_PRODUTO' && qa > 0 ? qa : 1
@@ -1577,6 +1590,8 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                     <label className="form-label">
                       {insumoSelUnidade === 'Kg'
                         ? 'Quantidade (g)'
+                        : insumoSelUnidade === 'L'
+                        ? 'Quantidade (ml)'
                         : insumoSelUnidade === 'Und'
                         ? 'Quantidade (und)'
                         : 'Quantidade'}
@@ -1588,7 +1603,13 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                       step="0.0001"
                       value={formQty}
                       onChange={(e) => setFormQty(e.target.value)}
-                      placeholder={insumoSelUnidade === 'Kg' ? 'Ex.: 120' : 'Ex.: 1'}
+                      placeholder={
+                        insumoSelUnidade === 'Kg'
+                          ? 'Ex.: 120'
+                          : insumoSelUnidade === 'L'
+                          ? 'Ex.: 300'
+                          : 'Ex.: 1'
+                      }
                     />
                   </div>
                   <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 130 }}>
@@ -1652,6 +1673,11 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                 {insumoSelUnidade === 'Kg' && (
                   <div style={{ fontSize: 11.5, color: '#999', marginTop: 8 }}>
                     Este insumo é cadastrado por kg. Informe aqui a quantidade em gramas.
+                  </div>
+                )}
+                {insumoSelUnidade === 'L' && (
+                  <div style={{ fontSize: 11.5, color: '#999', marginTop: 8 }}>
+                    Este insumo é cadastrado por litro. Informe aqui a quantidade em ml.
                   </div>
                 )}
                 {insumoSelUnidade === 'Und' && (

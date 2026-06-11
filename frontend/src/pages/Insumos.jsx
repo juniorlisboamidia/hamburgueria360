@@ -19,16 +19,21 @@ function num(value) {
   return qtyFormatter.format(Number(value))
 }
 
-// Unidades padronizadas: Kg (custo por kg, quantidades em gramas) e Und (custo por unidade)
+// Unidades padronizadas: Kg (custo por kg, quantidades em gramas),
+// L (custo por litro, quantidades em ml) e Und (custo por unidade)
 function unidadeNormalizada(u) {
   const v = String(u ?? '').trim().toLowerCase()
   if (['kg', 'kgs', 'kilo', 'quilo', 'quilograma'].includes(v)) return 'Kg'
+  if (['l', 'lt', 'litro', 'litros'].includes(v)) return 'L'
   if (['und', 'un', 'u', 'unid', 'unidade', 'unidades'].includes(v)) return 'Und'
   return null
 }
 // Sufixo da quantidade em fichas/receitas conforme a unidade do insumo
 function sufixoQuantidade(unidadeInsumo) {
-  return unidadeNormalizada(unidadeInsumo) === 'Kg' ? 'g' : 'und'
+  const u = unidadeNormalizada(unidadeInsumo)
+  if (u === 'Kg') return 'g'
+  if (u === 'L') return 'ml'
+  return 'und'
 }
 
 const TIPOS = [
@@ -75,7 +80,9 @@ function validateForm(form) {
   const { nome, unidade, custoUnitario, tipo, modoCusto, valorCaixa, quantidadeCaixa } = form
   if (!nome || !nome.trim()) return 'nome é obrigatório'
   if (!tipo) return 'tipo é obrigatório'
-  if (unidade !== 'Kg' && unidade !== 'Und') return 'unidade é obrigatória (Kg ou Und)'
+  if (unidade !== 'Kg' && unidade !== 'L' && unidade !== 'Und') {
+    return 'unidade é obrigatória (Kg, L ou Und)'
+  }
 
   if (unidade === 'Und' && modoCusto === 'CAIXA') {
     const v = Number(valorCaixa)
@@ -341,17 +348,22 @@ export default function Insumos() {
                     value={form.unidade}
                     onChange={(e) => setForm({ ...form, unidade: e.target.value })}
                   >
-                    {form.unidade !== 'Kg' && form.unidade !== 'Und' && (
+                    {form.unidade !== 'Kg' && form.unidade !== 'L' && form.unidade !== 'Und' && (
                       <option value="">— selecione —</option>
                     )}
                     <option value="Kg">Kg</option>
+                    <option value="L">L</option>
                     <option value="Und">Und</option>
                   </select>
                 </div>
                 {form.unidade !== 'Und' && (
                   <div className="form-group" style={{ marginBottom: 12, flex: 1 }}>
                     <label className="form-label">
-                      {form.unidade === 'Kg' ? 'Custo por kg (R$)' : 'Custo unitário (R$)'}
+                      {form.unidade === 'Kg'
+                        ? 'Custo por kg (R$)'
+                        : form.unidade === 'L'
+                        ? 'Custo por litro (R$)'
+                        : 'Custo unitário (R$)'}
                     </label>
                     <input
                       className="form-input"
@@ -367,7 +379,14 @@ export default function Insumos() {
               </div>
               {form.unidade === 'Kg' && (
                 <div style={{ fontSize: 11.5, color: '#999', marginTop: -6, marginBottom: 12 }}>
-                  Informe o custo de 1 kg. Na ficha técnica, as quantidades serão lançadas em gramas.
+                  Informe o custo de 1 kg. Na ficha técnica e nas receitas, as quantidades serão
+                  lançadas em gramas.
+                </div>
+              )}
+              {form.unidade === 'L' && (
+                <div style={{ fontSize: 11.5, color: '#999', marginTop: -6, marginBottom: 12 }}>
+                  Informe o custo de 1 litro. Na ficha técnica e nas receitas, as quantidades serão
+                  lançadas em ml.
                 </div>
               )}
 
@@ -408,7 +427,8 @@ export default function Insumos() {
                         />
                       </div>
                       <div style={{ fontSize: 11.5, color: '#999', marginTop: -6, marginBottom: 12 }}>
-                        Informe o custo de 1 unidade. Na ficha técnica, as quantidades serão lançadas em unidades.
+                        Informe o custo de 1 unidade. Na ficha técnica e nas receitas, as quantidades
+                        serão lançadas em unidades.
                       </div>
                     </>
                   ) : (
@@ -1047,9 +1067,10 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
                         {itens.map((item) => {
                           const isEditing = editingItemId === item.id
                           const custoUnit = Number(item.insumo.custoUnitario)
-                          const itemKg = unidadeNormalizada(item.insumo.unidade) === 'Kg'
+                          const unidadeItem = unidadeNormalizada(item.insumo.unidade)
+                          const divideMil = unidadeItem === 'Kg' || unidadeItem === 'L'
                           const qty = isEditing ? Number(editingQty) : Number(item.quantidade)
-                          const qtyBase = itemKg ? qty / 1000 : qty
+                          const qtyBase = divideMil ? qty / 1000 : qty
                           const custoAplicado = isEditing
                             ? (qty > 0 ? qtyBase * custoUnit : 0)
                             : Number(item.custoItem ?? (qty > 0 ? qtyBase * custoUnit : 0))
@@ -1145,6 +1166,8 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
                           <label className="form-label">
                             {ingUnidade === 'Kg'
                               ? 'Quantidade usada (g)'
+                              : ingUnidade === 'L'
+                              ? 'Quantidade usada (ml)'
                               : ingUnidade === 'Und'
                               ? 'Quantidade usada (und)'
                               : 'Quantidade usada'}
@@ -1156,7 +1179,7 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
                             step="0.001"
                             value={ingQty}
                             onChange={(e) => setIngQty(e.target.value)}
-                            placeholder={ingUnidade === 'Kg' ? 'Ex.: 300' : 'Ex.: 1'}
+                            placeholder={ingUnidade === 'Kg' || ingUnidade === 'L' ? 'Ex.: 300' : 'Ex.: 1'}
                           />
                         </div>
                         <div style={{ display: 'flex', gap: 6 }}>
@@ -1176,6 +1199,11 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
                       {ingUnidade === 'Kg' && (
                         <div style={{ fontSize: 11.5, color: '#999', marginTop: 8 }}>
                           Este insumo é cadastrado por kg. Informe aqui a quantidade em gramas.
+                        </div>
+                      )}
+                      {ingUnidade === 'L' && (
+                        <div style={{ fontSize: 11.5, color: '#999', marginTop: 8 }}>
+                          Este insumo é cadastrado por litro. Informe aqui a quantidade em ml.
                         </div>
                       )}
                       {ingUnidade === 'Und' && (

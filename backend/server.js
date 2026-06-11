@@ -32,26 +32,31 @@ const TIPOS_INSUMO = [
   'OPERACIONAL'
 ];
 
-// Unidades padronizadas: Kg (custo por 1 kg; quantidades em ficha/receita lançadas em gramas)
-// e Und (custo por 1 unidade; quantidades lançadas em unidades).
+// Unidades padronizadas: Kg (custo por 1 kg; quantidades em ficha/receita lançadas em gramas),
+// L (custo por 1 litro; quantidades lançadas em ml) e Und (custo por 1 unidade).
 function normalizeUnidade(u) {
   if (typeof u !== 'string') return null;
   const v = u.trim().toLowerCase();
   if (['kg', 'kgs', 'kilo', 'quilo', 'quilograma'].includes(v)) return 'Kg';
+  if (['l', 'lt', 'litro', 'litros'].includes(v)) return 'L';
   if (['und', 'un', 'u', 'unid', 'unidade', 'unidades'].includes(v)) return 'Und';
   return null;
 }
 
 // Converte a quantidade informada para a base do custo unitário:
-// insumo em Kg → quantidade em gramas → divide por 1000; insumo em Und → direto.
+// Kg (gramas) e L (ml) dividem por 1000; Und usa direto.
 function quantidadeBase(quantidade, unidadeInsumo) {
   const q = Number(quantidade);
-  return normalizeUnidade(unidadeInsumo) === 'Kg' ? q / 1000 : q;
+  const u = normalizeUnidade(unidadeInsumo);
+  return u === 'Kg' || u === 'L' ? q / 1000 : q;
 }
 
 // Unidade em que a quantidade deve ser informada/exibida na ficha ou receita
 function unidadeQuantidade(unidadeInsumo) {
-  return normalizeUnidade(unidadeInsumo) === 'Kg' ? 'g' : 'und';
+  const u = normalizeUnidade(unidadeInsumo);
+  if (u === 'Kg') return 'g';
+  if (u === 'L') return 'ml';
+  return 'und';
 }
 
 function insumoComUnidadeNormalizada(insumo) {
@@ -82,7 +87,7 @@ app.post('/api/insumos', async (req, res) => {
     }
     const unidadeNormalizada = normalizeUnidade(unidade);
     if (!unidadeNormalizada) {
-      return res.status(400).json({ error: 'Unidade inválida. Use Kg ou Und.' });
+      return res.status(400).json({ error: 'Unidade inválida. Use Kg, L ou Und.' });
     }
     if (custoUnitario === undefined || custoUnitario === null || isNaN(Number(custoUnitario))) {
       return res.status(400).json({ error: 'custoUnitario é obrigatório e deve ser numérico' });
@@ -146,7 +151,7 @@ app.put('/api/insumos/:id', async (req, res) => {
     if (unidade !== undefined) {
       const unidadeNormalizada = normalizeUnidade(unidade);
       if (!unidadeNormalizada) {
-        return res.status(400).json({ error: 'Unidade inválida. Use Kg ou Und.' });
+        return res.status(400).json({ error: 'Unidade inválida. Use Kg, L ou Und.' });
       }
       data.unidade = unidadeNormalizada;
     }
