@@ -509,6 +509,9 @@ export default function Faturamento() {
                   <span className="clr-muted">Sem dados suficientes para calcular.</span>
                 )}
               </div>
+              <div style={{ fontSize: 11.5, color: '#999', marginTop: 6, lineHeight: 1.5 }}>
+                O ponto de equilíbrio usa o CMV alvo configurado como base operacional.
+              </div>
             </div>
           </div>
 

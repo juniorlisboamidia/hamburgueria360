@@ -225,15 +225,15 @@ export default function PontoEquilibrio() {
               variant="brand"
             />
             <Card
-              title="CMV Médio"
-              value={pct(dados.cmvMedioPercentual)}
-              hint="Média dos produtos com ficha técnica"
+              title="CMV Alvo Usado"
+              value={pct(dados.cmvAlvoUsado)}
+              hint={`Base do PE · real médio dos produtos: ${pct(dados.cmvMedioRealProdutos)}`}
               variant="info"
             />
             <Card
-              title="Margem de Contribuição Real"
+              title="Margem de Contribuição"
               value={pct(dados.margemContribuicaoReal)}
-              hint="100% − CMV − custos variáveis"
+              hint="100% − CMV alvo − custos variáveis"
               variant={margemInsuficiente ? 'danger' : 'success'}
             />
             <Card
@@ -249,6 +249,17 @@ export default function PontoEquilibrio() {
               variant="warn"
             />
           </div>
+
+          {dados.mensagemBaseCalculo && (
+            <div style={{ fontSize: 11.5, color: '#999', marginTop: 8 }}>
+              {dados.mensagemBaseCalculo}
+            </div>
+          )}
+          {dados.avisoCmvReal && (
+            <div className="alert alert-yellow" style={{ marginTop: 10 }}>
+              <div className="alert-msg clr-yellow">{dados.avisoCmvReal}</div>
+            </div>
+          )}
 
           <div className="section-title">Detalhamento dos Custos Variáveis</div>
           <div className="table-card">

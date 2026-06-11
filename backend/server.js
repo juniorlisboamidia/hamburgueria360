@@ -1897,9 +1897,15 @@ app.get('/api/ponto-equilibrio', async (req, res) => {
     const percentualCustosFixosMensaisVariaveis =
       faturamentoAtual === 0 ? 0 : (custosVariaveisFixosMensais / faturamentoAtual) * 100;
 
+    // Base operacional do ponto de equilíbrio: CMV ALVO configurado.
+    // O CMV real médio dos produtos (média simples) era distorcido por produtos
+    // com CMV > 100% e segue sendo retornado apenas como diagnóstico.
+    const config = await getConfigPrecificacao();
+    const cmvAlvoUsado = Number(config.cmvAlvoPercentual);
+
     const margemContribuicaoReal =
       100 -
-      cmvMedioPercentual -
+      cmvAlvoUsado -
       custosVariaveisPercentuais -
       percentualCustosPorPedido -
       percentualCustosFixosMensaisVariaveis;
@@ -1937,7 +1943,19 @@ app.get('/api/ponto-equilibrio', async (req, res) => {
       totalCustosFixos: round2(totalCustosFixos),
       faturamentoAtual: round2(faturamentoAtual),
       totalPedidos,
+      // Diagnóstico: CMV real médio dos produtos (não é mais a base do PE)
       cmvMedioPercentual: round2(cmvMedioPercentual),
+      cmvMedioRealProdutos: round2(cmvMedioPercentual),
+      // Base operacional usada no cálculo do ponto de equilíbrio
+      cmvAlvoUsado: round2(cmvAlvoUsado),
+      cmvBasePontoEquilibrio: round2(cmvAlvoUsado),
+      fonteCmvPontoEquilibrio: 'CMV_ALVO',
+      mensagemBaseCalculo:
+        'O ponto de equilíbrio usa o CMV alvo configurado como base operacional.',
+      avisoCmvReal:
+        qtdProdutosValidos > 0 && cmvMedioPercentual > cmvAlvoUsado
+          ? 'Existem produtos com CMV acima do alvo. Eles não foram usados como base do ponto de equilíbrio, mas devem ser revisados.'
+          : null,
       custosVariaveisPercentuais: round2(custosVariaveisPercentuais),
       somaCustosPorPedido: round2(somaCustosPorPedido),
       custoVariavelPedidosTotal: round2(custoVariavelPedidosTotal),
@@ -2066,9 +2084,14 @@ app.get('/api/dashboard', async (req, res) => {
         ? 0
         : (custosVariaveisFixosMensais / faturamentoAtual) * 100;
 
+    // Base operacional do ponto de equilíbrio: CMV ALVO configurado (mesma regra
+    // do endpoint /ponto-equilibrio). CMV real médio permanece como diagnóstico.
+    const config = await getConfigPrecificacao();
+    const cmvAlvoUsado = Number(config.cmvAlvoPercentual);
+
     const margemContribuicaoReal =
       100 -
-      cmvMedioPercentual -
+      cmvAlvoUsado -
       custosVariaveisPercentuais -
       percentualCustosPorPedido -
       percentualCustosFixosMensaisVariaveis;
@@ -2108,7 +2131,15 @@ app.get('/api/dashboard', async (req, res) => {
       ticketMedio: round2(ticketMedio),
       totalCustosFixos: round2(totalCustosFixos),
       totalCustosVariaveis: round2(totalCustosVariaveis),
+      // Diagnóstico: CMV real médio dos produtos (não é mais a base do PE)
       cmvMedioPercentual: round2(cmvMedioPercentual),
+      cmvMedioRealProdutos: round2(cmvMedioPercentual),
+      // Base operacional usada no cálculo do ponto de equilíbrio
+      cmvAlvoUsado: round2(cmvAlvoUsado),
+      cmvBasePontoEquilibrio: round2(cmvAlvoUsado),
+      fonteCmvPontoEquilibrio: 'CMV_ALVO',
+      mensagemBaseCalculo:
+        'O ponto de equilíbrio usa o CMV alvo configurado como base operacional.',
       margemContribuicaoReal: round2(margemContribuicaoReal),
       pontoEquilibrio: pontoEquilibrio === null ? null : round2(pontoEquilibrio),
       diferencaParaEquilibrio:
