@@ -901,6 +901,7 @@ function FichaModal({ produtoId, onClose, onChanged }) {
   const [dadosError, setDadosError] = useState(null)
   const [dadosSaving, setDadosSaving] = useState(false)
 
+  const [showAddItemForm, setShowAddItemForm] = useState(false)
   const [formInsumoId, setFormInsumoId] = useState('')
   const [formQty, setFormQty] = useState('')
   const [formTipoUso, setFormTipoUso] = useState('INGREDIENTE')
@@ -1010,6 +1011,23 @@ function FichaModal({ produtoId, onClose, onChanged }) {
     setFormAtendida('')
   }
 
+  function openAddItemForm() {
+    setItemError(null)
+    setShowAddItemForm(true)
+  }
+
+  function cancelAddItem() {
+    resetItemForm()
+    setItemError(null)
+    setShowAddItemForm(false)
+  }
+
+  // Troca de aba fecha e limpa o formulário de novo item
+  function switchTab(tab) {
+    setActiveTab(tab)
+    if (showAddItemForm) cancelAddItem()
+  }
+
   function handleAddItem(e) {
     e.preventDefault()
     setItemError(null)
@@ -1041,6 +1059,7 @@ function FichaModal({ produtoId, onClose, onChanged }) {
       })
       .then(() => {
         resetItemForm()
+        setShowAddItemForm(false)
         setToast({ message: 'Item adicionado à ficha.', type: 'success' })
         return reload()
       })
@@ -1198,14 +1217,14 @@ function FichaModal({ produtoId, onClose, onChanged }) {
               <button
                 type="button"
                 className={'modal-tab' + (activeTab === 'PRECIFICACAO' ? ' active' : '')}
-                onClick={() => setActiveTab('PRECIFICACAO')}
+                onClick={() => switchTab('PRECIFICACAO')}
               >
                 Precificação
               </button>
               <button
                 type="button"
                 className={'modal-tab' + (activeTab === 'FICHA' ? ' active' : '')}
-                onClick={() => setActiveTab('FICHA')}
+                onClick={() => switchTab('FICHA')}
               >
                 Ficha Técnica
               </button>
@@ -1530,6 +1549,12 @@ function FichaModal({ produtoId, onClose, onChanged }) {
 
               {/* Adição integrada à ficha (continuação do card) */}
               <div className="ficha-add-area">
+                {!showAddItemForm ? (
+                  <button type="button" className="ficha-add-trigger" onClick={openAddItemForm}>
+                    + Adicionar novo item
+                  </button>
+                ) : (
+                <>
                 <div className="ficha-add-title">Adicionar novo item</div>
                 <form onSubmit={handleAddItem}>
                 <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
@@ -1610,9 +1635,19 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                       <ComposicaoBadge aplicarMargem={aplicaMargemPorTipoUso(formTipoUso)} />
                     </div>
                   </div>
-                  <button type="submit" className="btn btn-primary" disabled={itemSubmitting}>
-                    {itemSubmitting ? 'Adicionando…' : 'Adicionar item'}
-                  </button>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={cancelAddItem}
+                      disabled={itemSubmitting}
+                    >
+                      Cancelar
+                    </button>
+                    <button type="submit" className="btn btn-primary" disabled={itemSubmitting}>
+                      {itemSubmitting ? 'Adicionando…' : 'Adicionar item'}
+                    </button>
+                  </div>
                 </div>
                 {insumoSelUnidade === 'Kg' && (
                   <div style={{ fontSize: 11.5, color: '#999', marginTop: 8 }}>
@@ -1637,6 +1672,8 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                   </div>
                 )}
                 </form>
+                </>
+                )}
               </div>
             </div>
 

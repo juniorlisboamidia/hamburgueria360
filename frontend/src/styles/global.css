@@ -276,6 +276,24 @@ a { text-decoration: none; color: inherit; }
   letter-spacing: 0.8px;
   margin-bottom: 10px;
 }
+.ficha-add-trigger {
+  width: 100%;
+  background: none;
+  border: 1px dashed #ddd;
+  border-radius: 8px;
+  padding: 9px 12px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: #888;
+  cursor: pointer;
+  text-align: center;
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+.ficha-add-trigger:hover {
+  color: #f97316;
+  border-color: #fdba74;
+  background: #fff7ed;
+}
 
 /* Botões */
 .btn {
