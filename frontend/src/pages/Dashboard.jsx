@@ -65,9 +65,9 @@ function problemaPrincipal(analise) {
   if (analise.statusCmv === 'SEM_FICHA') return 'Sem ficha técnica'
   if (analise.statusCmv === 'SEM_PRECO') return 'Sem preço de venda'
   if (analise.cmvPercentual !== null && Number(analise.cmvPercentual) > 100) {
-    return 'CMV acima de 100%'
+    return 'Custo acima do preço'
   }
-  if (analise.statusCmv === 'CRITICO') return 'CMV crítico'
+  if (analise.statusCmv === 'CRITICO') return 'CMV do produto crítico'
   if (
     analise.diferencaPrecoSugerido !== null &&
     analise.diferencaPrecoSugerido !== undefined &&
@@ -171,8 +171,8 @@ export default function Dashboard() {
   const ORDEM_PROBLEMA = [
     'Sem ficha técnica',
     'Sem preço de venda',
-    'CMV acima de 100%',
-    'CMV crítico',
+    'Custo acima do preço',
+    'CMV do produto crítico',
     'Preço abaixo do sugerido'
   ]
   const produtosAtencao = produtos
@@ -206,7 +206,7 @@ export default function Dashboard() {
   if (criticos.length > 0) {
     alertas.push({
       nivel: 'alert-red',
-      texto: `${criticos.length} produto(s) estão com CMV crítico.`
+      texto: `${criticos.length} produto(s) estão com CMV do produto crítico.`
     })
   }
   if (cmvAcima100.length > 0) {
@@ -242,8 +242,8 @@ export default function Dashboard() {
   const acoes = []
   if (semFicha.length > 0) acoes.push('Completar a ficha técnica dos produtos sem ficha.')
   if (semPreco.length > 0) acoes.push('Definir o preço de venda dos produtos sem preço.')
-  if (cmvAcima100.length > 0) acoes.push('Revisar produtos com CMV acima de 100%.')
-  else if (criticos.length > 0) acoes.push('Revisar preço e ficha dos produtos com CMV crítico.')
+  if (cmvAcima100.length > 0) acoes.push('Revisar produtos com custo total acima do preço de venda.')
+  else if (criticos.length > 0) acoes.push('Revisar preço e ficha dos produtos com CMV do produto crítico.')
   if (ppACalcular.length > 0) acoes.push('Atualizar o custo das produções próprias a calcular.')
   if (insumosSemCusto.length > 0) acoes.push('Informar o custo dos insumos sem custo válido.')
   if (abaixoSugerido.length > 0) acoes.push('Revisar produtos vendidos abaixo do preço sugerido.')
@@ -413,7 +413,11 @@ export default function Dashboard() {
             <Card
               title="Críticos"
               value={int(criticos.length)}
-              hint={atencao.length > 0 ? `${int(atencao.length)} em atenção` : 'CMV acima de 40%'}
+              hint={
+                atencao.length > 0
+                  ? `${int(atencao.length)} em atenção · por CMV do produto`
+                  : 'CMV do produto acima de 35%'
+              }
               variant={criticos.length > 0 ? 'danger' : 'success'}
             />
             <Card
@@ -454,7 +458,7 @@ export default function Dashboard() {
                     <tr>
                       <th>Produto</th>
                       <th>Problema principal</th>
-                      <th>CMV</th>
+                      <th>CMV do produto</th>
                       <th>Preço de venda</th>
                       <th>Preço sugerido</th>
                     </tr>
@@ -467,7 +471,8 @@ export default function Dashboard() {
                           <span
                             className={
                               'badge ' +
-                              (p.problema === 'CMV acima de 100%' || p.problema === 'CMV crítico'
+                              (p.problema === 'Custo acima do preço' ||
+                              p.problema === 'CMV do produto crítico'
                                 ? 'badge-red'
                                 : 'badge-yellow')
                             }
@@ -476,9 +481,10 @@ export default function Dashboard() {
                           </span>
                         </td>
                         <td>
-                          {p.analise?.cmvPercentual === null || p.analise?.cmvPercentual === undefined
+                          {p.analise?.cmvProdutoPercentual === null ||
+                          p.analise?.cmvProdutoPercentual === undefined
                             ? '—'
-                            : pct(p.analise.cmvPercentual)}
+                            : pct(p.analise.cmvProdutoPercentual)}
                         </td>
                         <td>{brl(p.precoVenda)}</td>
                         <td>

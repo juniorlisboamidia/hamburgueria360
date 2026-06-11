@@ -1212,6 +1212,15 @@ app.get('/api/produtos/:id/analise', async (req, res) => {
         custoComMargem: 0,
         custoEmbutido: 0,
         custoTotalFicha: 0,
+        custoProduto: 0,
+        custoTotalReal: 0,
+        cmvProdutoPercentual: null,
+        percentualTotalReal: null,
+        percentualCustoEmbutido: null,
+        lucroBrutoReal: null,
+        margemRealPercentual: null,
+        alertaCustoTotal: null,
+        alertaCustoEmbutido: null,
         lucroBruto: null,
         cmvPercentual: null,
         margemBrutaPercentual: null,
@@ -1241,6 +1250,15 @@ app.get('/api/produtos/:id/analise', async (req, res) => {
         custoComMargem: round2(totals.custoComMargem),
         custoEmbutido: round2(totals.custoEmbutido),
         custoTotalFicha: round2(totals.custoTotalFicha),
+        custoProduto: round2(totals.custoComMargem),
+        custoTotalReal: round2(totals.custoTotalFicha),
+        cmvProdutoPercentual: null,
+        percentualTotalReal: null,
+        percentualCustoEmbutido: null,
+        lucroBrutoReal: null,
+        margemRealPercentual: null,
+        alertaCustoTotal: null,
+        alertaCustoEmbutido: null,
         lucroBruto: null,
         cmvPercentual: null,
         margemBrutaPercentual: null,
@@ -1256,27 +1274,45 @@ app.get('/api/produtos/:id/analise', async (req, res) => {
       });
     }
 
+    // Leitura separada de custos:
+    // - custoProduto: itens com composição "Preço sugerido" (aplicarMargem = true)
+    // - custoEmbutido: itens com composição "Custo embutido" (aplicarMargem = false)
+    // - custoTotalReal: produto + embutido
+    // O status principal usa o CMV DO PRODUTO — embalagem/acompanhamento não deve
+    // sozinho jogar o produto para atenção/crítico; o custo total vira alerta à parte.
+    const custoProduto = totals.custoComMargem;
+    const custoTotalReal = totals.custoTotalFicha;
+    const cmvProdutoPercentual = (custoProduto / precoVenda) * 100;
+    const percentualCustoEmbutido = (totals.custoEmbutido / precoVenda) * 100;
     const lucroBruto = precoVenda - custoFichaTecnica;
+    // Compatibilidade: cmvPercentual segue sendo o percentual do custo TOTAL real
     const cmvPercentual = (custoFichaTecnica / precoVenda) * 100;
+    const percentualTotalReal = cmvPercentual;
     const margemBrutaPercentual = (lucroBruto / precoVenda) * 100;
+    const lucroBrutoReal = lucroBruto;
+    const margemRealPercentual = margemBrutaPercentual;
 
     let statusCmv;
     let mensagemDiagnostico;
-    if (cmvPercentual <= 30) {
+    if (cmvProdutoPercentual <= 30) {
       statusCmv = 'SAUDAVEL';
-      mensagemDiagnostico = 'CMV saudável. Produto com boa margem bruta.';
-    } else if (cmvPercentual <= 35) {
+      mensagemDiagnostico = 'CMV do produto saudável. Ingredientes com boa margem bruta.';
+    } else if (cmvProdutoPercentual <= 35) {
       statusCmv = 'ATENCAO';
-      mensagemDiagnostico = 'CMV em atenção. Acompanhe variações de custo dos insumos.';
-    } else if (cmvPercentual <= 40) {
-      statusCmv = 'ALERTA';
       mensagemDiagnostico =
-        'CMV acima do ideal. Revise preço de venda, ficha técnica e porcionamento.';
+        'CMV do produto em atenção. Acompanhe variações de custo dos ingredientes.';
     } else {
       statusCmv = 'CRITICO';
       mensagemDiagnostico =
-        'CMV crítico. Produto pode estar comprometendo a margem da operação.';
+        'CMV do produto crítico. Revise preço de venda, ficha técnica e porcionamento.';
     }
+
+    const alertaCustoTotal =
+      percentualTotalReal > 40 ? 'Custo total real acima de 40% do preço de venda.' : null;
+    const alertaCustoEmbutido =
+      percentualCustoEmbutido > 10
+        ? 'Custo embutido elevado. Avalie compensar no preço, taxa de entrega ou pedido mínimo.'
+        : null;
 
     let mensagemPrecificacao;
     if (precificacao.precoSugerido === null) {
@@ -1304,6 +1340,15 @@ app.get('/api/produtos/:id/analise', async (req, res) => {
       custoComMargem: round2(totals.custoComMargem),
       custoEmbutido: round2(totals.custoEmbutido),
       custoTotalFicha: round2(totals.custoTotalFicha),
+      custoProduto: round2(custoProduto),
+      custoTotalReal: round2(custoTotalReal),
+      cmvProdutoPercentual: round2(cmvProdutoPercentual),
+      percentualTotalReal: round2(percentualTotalReal),
+      percentualCustoEmbutido: round2(percentualCustoEmbutido),
+      lucroBrutoReal: round2(lucroBrutoReal),
+      margemRealPercentual: round2(margemRealPercentual),
+      alertaCustoTotal,
+      alertaCustoEmbutido,
       lucroBruto: round2(lucroBruto),
       cmvPercentual: round2(cmvPercentual),
       margemBrutaPercentual: round2(margemBrutaPercentual),

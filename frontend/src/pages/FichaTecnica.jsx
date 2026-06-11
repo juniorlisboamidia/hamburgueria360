@@ -338,11 +338,15 @@ function FichaProdutoEditor({ produtoId }) {
       <div className="section-title">Análise do Produto</div>
       <div className="grid-4">
         <Card title="Preço de Venda" value={brl(produto.precoVenda)} hint="Cadastrado no produto" variant="brand" />
-        <Card title="Custo da Ficha" value={brl(custoTotal)} hint={semFicha ? 'Sem itens' : 'Soma dos insumos'} />
         <Card
-          title="CMV"
-          value={pct(analise.cmvPercentual)}
-          hint={semFicha ? 'Adicione insumos' : 'Custo / preço'}
+          title="Custo Total Real"
+          value={brl(custoTotal)}
+          hint={semFicha ? 'Sem itens' : 'Produto + embutido'}
+        />
+        <Card
+          title="CMV do Produto"
+          value={pct(analise.cmvProdutoPercentual ?? analise.cmvPercentual)}
+          hint={semFicha ? 'Adicione insumos' : 'Custo do produto / preço'}
           variant={variant}
         />
         <Card

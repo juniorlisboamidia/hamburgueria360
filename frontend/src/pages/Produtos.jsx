@@ -56,8 +56,12 @@ function buildAlertasFicha(analise, itens) {
     analise?.cmvPercentual !== undefined &&
     Number(analise.cmvPercentual) > 100
   ) {
-    alertas.push('CMV acima de 100%. Revise preço, ficha ou quantidades.')
+    alertas.push('Custo total acima de 100% do preço. Revise preço, ficha ou quantidades.')
   }
+  // Alertas separados do status: custo total/embutido altos não rebaixam o
+  // status do produto (que olha só o CMV do produto), mas merecem revisão
+  if (analise?.alertaCustoTotal) alertas.push(analise.alertaCustoTotal)
+  if (analise?.alertaCustoEmbutido) alertas.push(analise.alertaCustoEmbutido)
   if (
     analise?.diferencaPrecoSugerido !== null &&
     analise?.diferencaPrecoSugerido !== undefined &&
@@ -573,23 +577,23 @@ export default function Produtos() {
 
                 {/* Bloco 3 — Indicadores técnicos */}
                 <div style={{ flex: 1 }}>
-                  <MetricRow label="Custo da ficha">
+                  <MetricRow label="CMV do produto">
+                    {a.cmvProdutoPercentual === null || a.cmvProdutoPercentual === undefined
+                      ? <span className="clr-muted">—</span>
+                      : <span className={cmvClass} style={{ fontWeight: 600 }}>{pct(a.cmvProdutoPercentual)}</span>}
+                  </MetricRow>
+                  <MetricRow label="Custo total real">
                     {semFichaProduto
                       ? <span className="clr-muted">Não cadastrado</span>
-                      : brl(a.custoFichaTecnica)}
+                      : brl(a.custoTotalReal ?? a.custoFichaTecnica)}
                   </MetricRow>
-                  <MetricRow label="CMV">
-                    {a.cmvPercentual === null || a.cmvPercentual === undefined
-                      ? <span className="clr-muted">—</span>
-                      : <span className={cmvClass} style={{ fontWeight: 600 }}>{pct(a.cmvPercentual)}</span>}
+                  <MetricRow label="Margem real">
+                    {pct(a.margemRealPercentual ?? a.margemBrutaPercentual)}
                   </MetricRow>
-                  <MetricRow label="Margem bruta">
-                    {pct(a.margemBrutaPercentual)}
-                  </MetricRow>
-                  <MetricRow label="Lucro bruto">
+                  <MetricRow label="Lucro bruto real">
                     {a.lucroBruto === null || a.lucroBruto === undefined
                       ? <span className="clr-muted">—</span>
-                      : <span className={lucroPositivo ? 'clr-green' : 'clr-red'}>{brl(a.lucroBruto)}</span>}
+                      : <span className={lucroPositivo ? 'clr-green' : 'clr-red'}>{brl(a.lucroBrutoReal ?? a.lucroBruto)}</span>}
                   </MetricRow>
                 </div>
 
@@ -1286,19 +1290,19 @@ function FichaModal({ produtoId, onClose, onChanged }) {
               </form>
             </div>
 
-            {/* Seção 2 — Resumo financeiro */}
+            {/* Seção 2 — Resumo financeiro: CMV do produto separado do custo embutido */}
             <div className="section-title">Resumo Financeiro</div>
-            <div className="grid-5">
+            <div className="grid-3">
               <Card title="Preço de Venda" value={brl(analise?.precoVenda)} hint="Cadastrado no produto" variant="brand" />
               <Card
-                title="Custo Total Real"
-                value={brl(custoTotal)}
-                hint={semFicha ? 'Sem itens na ficha' : 'Base do CMV real'}
+                title="Custo do Produto"
+                value={brl(analise?.custoProduto)}
+                hint={semFicha ? 'Sem itens na ficha' : 'Ingredientes com preço sugerido'}
               />
               <Card
-                title="CMV"
-                value={pct(analise?.cmvPercentual)}
-                hint={semFicha ? 'Adicione insumos' : 'Custo / preço'}
+                title="CMV do Produto"
+                value={pct(analise?.cmvProdutoPercentual)}
+                hint={semFicha ? 'Adicione insumos' : 'Custo do produto / preço de venda'}
                 variant={
                   status === 'SAUDAVEL' ? 'success'
                   : status === 'ATENCAO' ? 'warn'
@@ -1307,23 +1311,33 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                   : 'info'
                 }
               />
+            </div>
+            <div className="grid-3">
               <Card
-                title="Margem Bruta"
-                value={pct(analise?.margemBrutaPercentual)}
-                hint="Sobre o preço de venda"
-                variant={
-                  analise?.margemBrutaPercentual !== null && analise?.margemBrutaPercentual > 0
-                    ? 'success'
-                    : 'info'
-                }
+                title="Custo Embutido"
+                value={brl(analise?.custoEmbutido)}
+                hint="Embalagem, acompanhamento e operacional"
               />
               <Card
-                title="Lucro Bruto"
-                value={analise?.lucroBruto === null || analise?.lucroBruto === undefined
+                title="Custo Total Real"
+                value={brl(custoTotal)}
+                hint={`Produto + embutido${
+                  analise?.percentualTotalReal === null || analise?.percentualTotalReal === undefined
+                    ? ''
+                    : ` · ${pct(analise.percentualTotalReal)} do preço`
+                }`}
+              />
+              <Card
+                title="Lucro Bruto Real"
+                value={analise?.lucroBrutoReal === null || analise?.lucroBrutoReal === undefined
                   ? '—'
-                  : brl(analise.lucroBruto)}
-                hint="Preço − custo real"
-                variant={analise?.lucroBruto !== null && Number(analise?.lucroBruto) > 0 ? 'success' : 'info'}
+                  : brl(analise.lucroBrutoReal)}
+                hint={`Preço − custo total real${
+                  analise?.margemRealPercentual === null || analise?.margemRealPercentual === undefined
+                    ? ''
+                    : ` · margem ${pct(analise.margemRealPercentual)}`
+                }`}
+                variant={analise?.lucroBrutoReal !== null && Number(analise?.lucroBrutoReal) > 0 ? 'success' : 'info'}
               />
             </div>
 
@@ -1337,8 +1351,8 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                 <div className="card-label">Venda Direta</div>
                 <MetricRow label="CMV alvo">{pct(analise?.cmvAlvoPercentual)}</MetricRow>
                 <MetricRow label="Lucro desejado">{pct(analise?.lucroDesejadoPercentual)}</MetricRow>
-                <MetricRow label="Custo com margem">{brl(analise?.custoComMargem)}</MetricRow>
-                <MetricRow label="Custos embutidos">{brl(analise?.custoEmbutido)}</MetricRow>
+                <MetricRow label="Custo do produto">{brl(analise?.custoProduto)}</MetricRow>
+                <MetricRow label="Custo embutido">{brl(analise?.custoEmbutido)}</MetricRow>
                 <MetricRow label="Preço sugerido">
                   <span style={{ fontWeight: 600 }} className="clr-blue">
                     {analise?.precoSugerido === null || analise?.precoSugerido === undefined
@@ -1704,9 +1718,6 @@ function FichaModal({ produtoId, onClose, onChanged }) {
             {itens.length > 0 && (
               <div
                 style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
                   marginTop: 12,
                   padding: '14px 18px',
                   background: '#fff',
@@ -1716,8 +1727,27 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                   color: '#555'
                 }}
               >
-                <span>Custo total da ficha técnica</span>
-                <strong className="clr-orange" style={{ fontSize: 18 }}>{brl(custoTotal)}</strong>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '3px 0' }}>
+                  <span>Custo do produto (preço sugerido)</span>
+                  <strong style={{ fontSize: 14, color: '#111' }}>{brl(fichaTotais.custoComMargem)}</strong>
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '3px 0' }}>
+                  <span>Custo embutido (embalagem/acompanhamento)</span>
+                  <strong style={{ fontSize: 14, color: '#111' }}>{brl(fichaTotais.custoEmbutido)}</strong>
+                </div>
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    marginTop: 6,
+                    paddingTop: 8,
+                    borderTop: '1px solid #f0f0f0'
+                  }}
+                >
+                  <span style={{ fontWeight: 600 }}>Custo total real</span>
+                  <strong className="clr-orange" style={{ fontSize: 18 }}>{brl(custoTotal)}</strong>
+                </div>
               </div>
             )}
             </>
