@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import api from '../services/api'
 import Card from '../components/Card'
+import Toast from '../components/Toast'
 
 const brlFormatter = new Intl.NumberFormat('pt-BR', {
   style: 'currency',
@@ -83,7 +84,7 @@ export default function Insumos() {
   const [error, setError] = useState(null)
   const [search, setSearch] = useState('')
   const [filtroTipo, setFiltroTipo] = useState('TODOS')
-  const [feedback, setFeedback] = useState(null)
+  const [toast, setToast] = useState(null)
 
   const [modalOpen, setModalOpen] = useState(false)
   const [editingId, setEditingId] = useState(null)
@@ -126,7 +127,6 @@ export default function Insumos() {
     setEditingId(null)
     setForm(FORM_BLANK)
     setFormError(null)
-    setFeedback(null)
     setModalOpen(true)
   }
 
@@ -143,7 +143,6 @@ export default function Insumos() {
       fornecedor: insumo.fornecedor ?? ''
     })
     setFormError(null)
-    setFeedback(null)
     setModalOpen(true)
   }
 
@@ -167,9 +166,12 @@ export default function Insumos() {
 
     request
       .then(() => {
-        setFeedback(editingId === null
-          ? 'Insumo criado com sucesso.'
-          : 'Insumo atualizado com sucesso.')
+        setToast({
+          message: editingId === null
+            ? 'Insumo criado com sucesso.'
+            : 'Insumo atualizado com sucesso.',
+          type: 'success'
+        })
         closeModal()
         load()
       })
@@ -185,15 +187,17 @@ export default function Insumos() {
     )
     if (!ok) return
     setDeletingId(insumo.id)
-    setFeedback(null)
     api
       .delete(`/insumos/${insumo.id}`)
       .then(() => {
-        setFeedback(`Insumo "${insumo.nome}" inativado.`)
+        setToast({ message: `Insumo "${insumo.nome}" inativado.`, type: 'success' })
         load()
       })
       .catch((e) =>
-        window.alert(e?.response?.data?.error ?? e?.message ?? 'Erro ao inativar.')
+        setToast({
+          message: e?.response?.data?.error ?? e?.message ?? 'Erro ao inativar insumo.',
+          type: 'error'
+        })
       )
       .finally(() => setDeletingId(null))
   }
@@ -249,11 +253,11 @@ export default function Insumos() {
         </button>
       </div>
 
-      {feedback && (
-        <div className="alert alert-green" style={{ marginBottom: 12 }}>
-          <div className="alert-msg clr-green">{feedback}</div>
-        </div>
-      )}
+      <Toast
+        message={toast?.message}
+        type={toast?.type}
+        onClose={() => setToast(null)}
+      />
 
       {modalOpen && (
         <div className="modal-overlay">
@@ -501,7 +505,7 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
   const [receita, setReceita] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const [feedback, setFeedback] = useState(null)
+  const [toast, setToast] = useState(null)
 
   const [dadosForm, setDadosForm] = useState(RECEITA_FORM_BLANK)
   const [dadosError, setDadosError] = useState(null)
@@ -556,7 +560,6 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
   function handleSaveDados(e) {
     e.preventDefault()
     setDadosError(null)
-    setFeedback(null)
     const r = Number(dadosForm.rendimento)
     if (dadosForm.rendimento === '' || !Number.isFinite(r) || r <= 0) {
       setDadosError('rendimento é obrigatório e deve ser maior que zero')
@@ -581,7 +584,7 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
       })
       .then((res) => {
         applyResponse(res.data)
-        setFeedback('Dados da receita salvos.')
+        setToast({ message: 'Dados da receita salvos.', type: 'success' })
       })
       .catch((e) =>
         setDadosError(e?.response?.data?.error ?? e?.message ?? 'Erro ao salvar receita.')
@@ -592,7 +595,6 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
   function handleAddIngrediente(e) {
     e.preventDefault()
     setIngError(null)
-    setFeedback(null)
     if (!ingId) {
       setIngError('Selecione um insumo.')
       return
@@ -631,7 +633,6 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
   }
   function saveEditItem() {
     setEditError(null)
-    setFeedback(null)
     const q = Number(editingQty)
     if (!Number.isFinite(q) || q <= 0) {
       setEditError('Quantidade deve ser maior que zero.')
@@ -653,27 +654,34 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
   function handleDeleteItem(item) {
     const ok = window.confirm(`Remover "${item.insumo.nome}" da receita?`)
     if (!ok) return
-    setFeedback(null)
     api
       .delete(`/receitas-producao/itens/${item.id}`)
-      .then((res) => applyResponse(res.data))
+      .then((res) => {
+        applyResponse(res.data)
+        setToast({ message: 'Ingrediente removido da receita.', type: 'success' })
+      })
       .catch((err) =>
-        window.alert(err?.response?.data?.error ?? err?.message ?? 'Erro ao remover.')
+        setToast({
+          message: err?.response?.data?.error ?? err?.message ?? 'Erro ao remover.',
+          type: 'error'
+        })
       )
   }
 
   function handleAtualizarCusto() {
-    setFeedback(null)
     setCustoSaving(true)
     api
       .post(`/insumos/${insumoId}/receita/atualizar-custo`)
       .then((res) => {
         applyResponse(res.data)
-        setFeedback('Custo do insumo atualizado com base na receita.')
+        setToast({ message: 'Custo do insumo atualizado com base na receita.', type: 'success' })
         return onChanged()
       })
       .catch((err) =>
-        window.alert(err?.response?.data?.error ?? err?.message ?? 'Erro ao atualizar custo.')
+        setToast({
+          message: err?.response?.data?.error ?? err?.message ?? 'Erro ao atualizar custo.',
+          type: 'error'
+        })
       )
       .finally(() => setCustoSaving(false))
   }
@@ -721,12 +729,6 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
           </div>
         ) : (
           <>
-            {feedback && (
-              <div className="alert alert-green" style={{ marginBottom: 12 }}>
-                <div className="alert-msg clr-green">{feedback}</div>
-              </div>
-            )}
-
             {/* Seção 1 — Dados da receita */}
             <div className="section-title" style={{ marginTop: 0 }}>Dados da Receita</div>
             <div className="card">
@@ -1038,6 +1040,12 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
             )}
           </>
         )}
+
+        <Toast
+          message={toast?.message}
+          type={toast?.type}
+          onClose={() => setToast(null)}
+        />
       </div>
     </div>
   )

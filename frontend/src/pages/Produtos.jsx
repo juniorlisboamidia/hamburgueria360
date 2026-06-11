@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import api from '../services/api'
 import Card from '../components/Card'
+import Toast from '../components/Toast'
+import ConfirmDialog from '../components/ConfirmDialog'
 
 const brlFormatter = new Intl.NumberFormat('pt-BR', {
   style: 'currency',
@@ -114,14 +116,6 @@ const STATUS_LABEL = {
   SEM_FICHA: 'Sem ficha',
   SEM_PRECO: 'Sem preço'
 }
-const STATUS_ALERT = {
-  SAUDAVEL:  'alert-green',
-  ATENCAO:   'alert-yellow',
-  ALERTA:    'alert-yellow',
-  CRITICO:   'alert-red',
-  SEM_FICHA: 'alert-gray',
-  SEM_PRECO: 'alert-gray'
-}
 const CMV_COLOR_CLASS = {
   SAUDAVEL:  'clr-green',
   ATENCAO:   'clr-yellow',
@@ -193,7 +187,8 @@ export default function Produtos() {
   const [creating, setCreating] = useState(false)
 
   const [deletingId, setDeletingId] = useState(null)
-  const [feedback, setFeedback] = useState(null)
+  const [produtoParaInativar, setProdutoParaInativar] = useState(null)
+  const [toast, setToast] = useState(null)
 
   const [fichaProdutoId, setFichaProdutoId] = useState(null)
   const [configOpen, setConfigOpen] = useState(false)
@@ -240,7 +235,6 @@ export default function Produtos() {
   function openCreate() {
     setCreateForm(FORM_BLANK)
     setCreateError(null)
-    setFeedback(null)
     setCreateOpen(true)
   }
 
@@ -259,7 +253,7 @@ export default function Produtos() {
     api
       .post('/produtos', payloadFromForm(createForm))
       .then(() => {
-        setFeedback('Produto criado com sucesso.')
+        setToast({ message: 'Produto criado com sucesso.', type: 'success' })
         closeCreate()
         load()
       })
@@ -270,20 +264,29 @@ export default function Produtos() {
   }
 
   function handleDelete(p) {
-    const ok = window.confirm('Tem certeza que deseja inativar este produto?')
-    if (!ok) return
+    setProdutoParaInativar(p)
+  }
+
+  function confirmInativarProduto() {
+    const p = produtoParaInativar
+    if (!p) return
     setDeletingId(p.id)
-    setFeedback(null)
     api
       .delete(`/produtos/${p.id}`)
       .then(() => {
-        setFeedback(`Produto "${p.nome}" inativado.`)
+        setToast({ message: `Produto "${p.nome}" inativado.`, type: 'success' })
         load()
       })
       .catch((e) =>
-        window.alert(e?.response?.data?.error ?? e?.message ?? 'Erro ao inativar produto.')
+        setToast({
+          message: e?.response?.data?.error ?? e?.message ?? 'Erro ao inativar produto.',
+          type: 'error'
+        })
       )
-      .finally(() => setDeletingId(null))
+      .finally(() => {
+        setDeletingId(null)
+        setProdutoParaInativar(null)
+      })
   }
 
   if (loading) {
@@ -322,7 +325,7 @@ export default function Produtos() {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <button type="button" className="btn btn-secondary" onClick={() => { setFeedback(null); setConfigOpen(true) }}>
+          <button type="button" className="btn btn-secondary" onClick={() => setConfigOpen(true)}>
             Configurar precificação
           </button>
           <button type="button" className="btn btn-primary" onClick={openCreate}>
@@ -331,11 +334,28 @@ export default function Produtos() {
         </div>
       </div>
 
-      {feedback && (
-        <div className="alert alert-green" style={{ marginBottom: 12 }}>
-          <div className="alert-msg clr-green">{feedback}</div>
-        </div>
-      )}
+      <Toast
+        message={toast?.message}
+        type={toast?.type}
+        onClose={() => setToast(null)}
+      />
+
+      <ConfirmDialog
+        open={produtoParaInativar !== null}
+        title="Inativar produto?"
+        message={
+          produtoParaInativar
+            ? `Você está prestes a inativar "${produtoParaInativar.nome}".`
+            : ''
+        }
+        description="O produto sai do cardápio e dos cálculos, mas o histórico é preservado."
+        confirmLabel="Inativar produto"
+        cancelLabel="Cancelar"
+        variant="danger"
+        loading={deletingId !== null}
+        onConfirm={confirmInativarProduto}
+        onCancel={() => setProdutoParaInativar(null)}
+      />
 
       {createOpen && (
         <div className="modal-overlay">
@@ -406,7 +426,10 @@ export default function Produtos() {
           onClose={() => setConfigOpen(false)}
           onSaved={() => {
             setConfigOpen(false)
-            setFeedback('Configuração de precificação salva. Preços recalculados.')
+            setToast({
+              message: 'Configuração de precificação salva. Preços recalculados.',
+              type: 'success'
+            })
             load()
           }}
         />
@@ -860,9 +883,11 @@ function FichaModal({ produtoId, onClose, onChanged }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
+  const [activeTab, setActiveTab] = useState('PRECIFICACAO')
+  const [toast, setToast] = useState(null)
+
   const [dadosForm, setDadosForm] = useState(FORM_BLANK)
   const [dadosError, setDadosError] = useState(null)
-  const [dadosOk, setDadosOk] = useState(false)
   const [dadosSaving, setDadosSaving] = useState(false)
 
   const [formInsumoId, setFormInsumoId] = useState('')
@@ -878,6 +903,9 @@ function FichaModal({ produtoId, onClose, onChanged }) {
   const [editForm, setEditForm] = useState(null)
   const [editError, setEditError] = useState(null)
   const [editSubmitting, setEditSubmitting] = useState(false)
+
+  const [itemParaRemover, setItemParaRemover] = useState(null)
+  const [removendoItem, setRemovendoItem] = useState(false)
 
   function applyFicha(fichaData) {
     setProduto(fichaData.produto)
@@ -943,11 +971,13 @@ function FichaModal({ produtoId, onClose, onChanged }) {
     const err = validateForm(dadosForm)
     if (err) { setDadosError(err); return }
     setDadosError(null)
-    setDadosOk(false)
     setDadosSaving(true)
     api
       .put(`/produtos/${produtoId}`, payloadFromForm(dadosForm))
-      .then(() => { setDadosOk(true); return reload() })
+      .then(() => {
+        setToast({ message: 'Dados do produto salvos. CMV e margem recalculados.', type: 'success' })
+        return reload()
+      })
       .catch((e) =>
         setDadosError(e?.response?.data?.error ?? e?.message ?? 'Erro ao salvar produto.')
       )
@@ -1004,6 +1034,7 @@ function FichaModal({ produtoId, onClose, onChanged }) {
       })
       .then(() => {
         resetItemForm()
+        setToast({ message: 'Item adicionado à ficha.', type: 'success' })
         return reload()
       })
       .catch((err) => {
@@ -1064,6 +1095,7 @@ function FichaModal({ produtoId, onClose, onChanged }) {
       })
       .then(() => {
         cancelEditItem()
+        setToast({ message: 'Item da ficha atualizado.', type: 'success' })
         return reload()
       })
       .catch((err) =>
@@ -1073,14 +1105,29 @@ function FichaModal({ produtoId, onClose, onChanged }) {
   }
 
   function handleDeleteItem(item) {
-    const ok = window.confirm(`Remover "${item.insumo.nome}" da ficha técnica?`)
-    if (!ok) return
+    setItemParaRemover(item)
+  }
+
+  function confirmRemoveItem() {
+    const item = itemParaRemover
+    if (!item) return
+    setRemovendoItem(true)
     api
       .delete(`/ficha-tecnica/itens/${item.id}`)
-      .then(reload)
+      .then(() => {
+        setToast({ message: 'Item removido da ficha.', type: 'success' })
+        return reload()
+      })
       .catch((err) =>
-        window.alert(err?.response?.data?.error ?? err?.message ?? 'Erro ao remover.')
+        setToast({
+          message: err?.response?.data?.error ?? err?.message ?? 'Erro ao remover.',
+          type: 'error'
+        })
       )
+      .finally(() => {
+        setRemovendoItem(false)
+        setItemParaRemover(null)
+      })
   }
 
   const status = analise?.statusCmv
@@ -1092,6 +1139,19 @@ function FichaModal({ produtoId, onClose, onChanged }) {
     : null
 
   const alertasFicha = loading || error ? [] : buildAlertasFicha(analise, itens)
+
+  const alertasBlock = alertasFicha.length > 0 && (
+    <>
+      <div className="section-title">Alertas da Ficha Técnica</div>
+      <div className="alert alert-yellow" style={{ marginBottom: 0 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {alertasFicha.map((a) => (
+            <div key={a} className="alert-msg">• {a}</div>
+          ))}
+        </div>
+      </div>
+    </>
+  )
 
   return (
     <div className="modal-overlay">
@@ -1128,6 +1188,25 @@ function FichaModal({ produtoId, onClose, onChanged }) {
           </div>
         ) : (
           <>
+            <div className="modal-tabs">
+              <button
+                type="button"
+                className={'modal-tab' + (activeTab === 'PRECIFICACAO' ? ' active' : '')}
+                onClick={() => setActiveTab('PRECIFICACAO')}
+              >
+                Precificação
+              </button>
+              <button
+                type="button"
+                className={'modal-tab' + (activeTab === 'FICHA' ? ' active' : '')}
+                onClick={() => setActiveTab('FICHA')}
+              >
+                Ficha Técnica
+              </button>
+            </div>
+
+            {activeTab === 'PRECIFICACAO' && (
+            <>
             {/* Seção 1 — Dados do produto */}
             <div className="section-title" style={{ marginTop: 0 }}>Dados do Produto</div>
             <div className="card">
@@ -1169,13 +1248,6 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                 {dadosError && (
                   <div className="alert alert-red" style={{ marginTop: 12, marginBottom: 0 }}>
                     <div className="alert-msg clr-red">{dadosError}</div>
-                  </div>
-                )}
-                {dadosOk && !dadosError && (
-                  <div className="alert alert-green" style={{ marginTop: 12, marginBottom: 0 }}>
-                    <div className="alert-msg clr-green">
-                      Dados salvos. CMV e margem recalculados.
-                    </div>
                   </div>
                 )}
               </form>
@@ -1223,18 +1295,7 @@ function FichaModal({ produtoId, onClose, onChanged }) {
             </div>
 
             {/* Alertas informativos da ficha técnica */}
-            {alertasFicha.length > 0 && (
-              <>
-                <div className="section-title">Alertas da Ficha Técnica</div>
-                <div className="alert alert-yellow" style={{ marginBottom: 0 }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                    {alertasFicha.map((a) => (
-                      <div key={a} className="alert-msg">• {a}</div>
-                    ))}
-                  </div>
-                </div>
-              </>
-            )}
+            {alertasBlock}
 
             {/* Seção 3 — Precificação técnica */}
             <div className="section-title">Precificação Técnica</div>
@@ -1288,33 +1349,12 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                 </MetricRow>
               </div>
             </div>
-            {analise?.mensagemPrecificacao && (
-              <div className="alert alert-gray" style={{ marginTop: 12 }}>
-                <div className="alert-msg">{analise.mensagemPrecificacao}</div>
-              </div>
+            </>
             )}
-            <div className="alert alert-gray" style={{ marginTop: 8 }}>
-              <div className="alert-msg">
-                Preço sugerido considera o custo da ficha, o CMV alvo e os custos embutidos.
-                Preço iFood parte do preço de venda e soma o impacto de taxa, campanha, entrega,
-                cupom e ticket médio. Embalagens, acompanhamentos e custos operacionais entram no
-                custo real, mas ficam fora da base de margem.
-              </div>
-            </div>
 
-            {semFicha ? (
-              <div className="alert alert-gray" style={{ marginTop: 12 }}>
-                <div className="alert-msg">
-                  Este produto ainda não possui ficha técnica cadastrada. Adicione o primeiro insumo abaixo.
-                </div>
-              </div>
-            ) : (
-              analise?.mensagemDiagnostico && (
-                <div className={'alert ' + (STATUS_ALERT[status] ?? 'alert-gray')} style={{ marginTop: 12 }}>
-                  <div className="alert-msg">{analise.mensagemDiagnostico}</div>
-                </div>
-              )
-            )}
+            {activeTab === 'FICHA' && (
+            <>
+            {alertasBlock}
 
             {/* Seção 4 — Ficha técnica */}
             <div className="section-title">Ficha Técnica</div>
@@ -1635,8 +1675,33 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                 )}
               </form>
             </div>
+            </>
+            )}
           </>
         )}
+
+        <ConfirmDialog
+          open={itemParaRemover !== null}
+          title="Remover item da ficha?"
+          message={
+            itemParaRemover
+              ? `Você está prestes a remover "${itemParaRemover.insumo?.nome}" da ficha técnica deste produto.`
+              : ''
+          }
+          description="Essa ação recalcula o custo da ficha e os preços sugeridos."
+          confirmLabel="Remover item"
+          cancelLabel="Cancelar"
+          variant="danger"
+          loading={removendoItem}
+          onConfirm={confirmRemoveItem}
+          onCancel={() => setItemParaRemover(null)}
+        />
+
+        <Toast
+          message={toast?.message}
+          type={toast?.type}
+          onClose={() => setToast(null)}
+        />
       </div>
     </div>
   )
