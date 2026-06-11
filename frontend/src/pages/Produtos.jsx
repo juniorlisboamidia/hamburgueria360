@@ -37,6 +37,67 @@ function sufixoQuantidade(unidadeInsumo) {
   return unidadeNormalizada(unidadeInsumo) === 'Kg' ? 'g' : 'und'
 }
 
+// Alertas informativos da ficha técnica (heurísticas de revisão — não bloqueiam nada)
+function buildAlertasFicha(analise, itens) {
+  const alertas = []
+  const semFicha = !itens || itens.length === 0
+  if (semFicha) alertas.push('Este produto está sem ficha técnica.')
+  if (analise?.statusCmv === 'SEM_PRECO') alertas.push('Preço de venda pendente.')
+  if (
+    analise?.cmvPercentual !== null &&
+    analise?.cmvPercentual !== undefined &&
+    Number(analise.cmvPercentual) > 100
+  ) {
+    alertas.push('CMV acima de 100%. Revise preço, ficha ou quantidades.')
+  }
+  if (
+    analise?.diferencaPrecoSugerido !== null &&
+    analise?.diferencaPrecoSugerido !== undefined &&
+    Number(analise.diferencaPrecoSugerido) < 0
+  ) {
+    alertas.push('Preço atual abaixo do preço sugerido.')
+  }
+
+  const precoVenda = Number(analise?.precoVenda)
+  for (const item of itens ?? []) {
+    const nome = item.insumo?.nome ?? 'Insumo'
+    const qtd = Number(item.quantidade)
+    if (unidadeNormalizada(item.insumo?.unidade) === 'Kg') {
+      if (qtd < 1) {
+        alertas.push(`Quantidade muito baixa para insumo em Kg: ${nome} — ${num(qtd)} g.`)
+      } else if (qtd >= 1000) {
+        alertas.push(`Quantidade alta para insumo em Kg: ${nome} — ${num(qtd)} g.`)
+      }
+    } else {
+      if (qtd > 10) {
+        alertas.push(`Quantidade alta para insumo unitário: ${nome} — ${num(qtd)} und.`)
+      }
+      if (Number.isFinite(qtd) && !Number.isInteger(qtd)) {
+        alertas.push(`Quantidade fracionada em insumo unitário: ${nome} — ${num(qtd)} und.`)
+      }
+    }
+
+    const custoApl = Number(item.custoAplicado)
+    if (Number.isFinite(custoApl)) {
+      if (custoApl === 0) {
+        alertas.push(`Item com custo aplicado zerado: ${nome}.`)
+      } else if (precoVenda > 0 && custoApl > precoVenda * 0.5) {
+        alertas.push(
+          `${nome} custa ${brl(custoApl)} — ${pct((custoApl / precoVenda) * 100)} do preço de venda.`
+        )
+      }
+    }
+
+    if (item.formaRateio && item.formaRateio !== 'POR_PRODUTO') {
+      const qa = Number(item.quantidadeAtendida)
+      if (!Number.isFinite(qa) || qa <= 0) {
+        alertas.push(`Rateio de ${nome} sem quantidade atendida válida.`)
+      }
+    }
+  }
+  return alertas
+}
+
 const STATUS_BADGE = {
   SAUDAVEL:  'badge-green',
   ATENCAO:   'badge-yellow',
@@ -1030,6 +1091,8 @@ function FichaModal({ produtoId, onClose, onChanged }) {
     ? unidadeNormalizada(insumoSelecionado.unidade)
     : null
 
+  const alertasFicha = loading || error ? [] : buildAlertasFicha(analise, itens)
+
   return (
     <div className="modal-overlay">
       <div className="modal modal-card-large">
@@ -1158,6 +1221,20 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                 variant={analise?.lucroBruto !== null && Number(analise?.lucroBruto) > 0 ? 'success' : 'info'}
               />
             </div>
+
+            {/* Alertas informativos da ficha técnica */}
+            {alertasFicha.length > 0 && (
+              <>
+                <div className="section-title">Alertas da Ficha Técnica</div>
+                <div className="alert alert-yellow" style={{ marginBottom: 0 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {alertasFicha.map((a) => (
+                      <div key={a} className="alert-msg">• {a}</div>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
 
             {/* Seção 3 — Precificação técnica */}
             <div className="section-title">Precificação Técnica</div>
