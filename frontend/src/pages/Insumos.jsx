@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import api from '../services/api'
 import Card from '../components/Card'
 import Toast from '../components/Toast'
+import ConfirmDialog from '../components/ConfirmDialog'
 
 const brlFormatter = new Intl.NumberFormat('pt-BR', {
   style: 'currency',
@@ -53,27 +54,66 @@ const FORM_BLANK = {
   tipo: 'INGREDIENTE',
   unidade: 'Kg',
   custoUnitario: '',
-  fornecedor: ''
+  fornecedor: '',
+  // Modo de custo (apenas para Und): DIRETO informa o custo por unidade;
+  // CAIXA calcula custoUnitario = valorCaixa / quantidadeCaixa (não persistidos).
+  modoCusto: 'DIRETO',
+  valorCaixa: '',
+  quantidadeCaixa: ''
 }
 
-function validateForm({ nome, unidade, custoUnitario, tipo }) {
+// Custo por unidade calculado a partir da caixa/pacote (null se inválido)
+function custoCaixaCalculado({ valorCaixa, quantidadeCaixa }) {
+  const v = Number(valorCaixa)
+  const q = Number(quantidadeCaixa)
+  if (valorCaixa === '' || quantidadeCaixa === '') return null
+  if (!Number.isFinite(v) || v <= 0 || !Number.isFinite(q) || q <= 0) return null
+  return v / q
+}
+
+function validateForm(form) {
+  const { nome, unidade, custoUnitario, tipo, modoCusto, valorCaixa, quantidadeCaixa } = form
   if (!nome || !nome.trim()) return 'nome é obrigatório'
   if (!tipo) return 'tipo é obrigatório'
   if (unidade !== 'Kg' && unidade !== 'Und') return 'unidade é obrigatória (Kg ou Und)'
+
+  if (unidade === 'Und' && modoCusto === 'CAIXA') {
+    const v = Number(valorCaixa)
+    if (valorCaixa === '' || !Number.isFinite(v) || v <= 0) {
+      return 'valor da caixa/pacote deve ser maior que zero'
+    }
+    const q = Number(quantidadeCaixa)
+    if (quantidadeCaixa === '' || !Number.isFinite(q) || q <= 0) {
+      return 'quantidade na caixa/pacote deve ser maior que zero'
+    }
+    if (!(custoCaixaCalculado(form) > 0)) {
+      return 'custo calculado por unidade deve ser maior que zero'
+    }
+    return null
+  }
+
   const c = Number(custoUnitario)
   if (custoUnitario === '' || !Number.isFinite(c)) {
-    return 'custo unitário é obrigatório e deve ser numérico'
+    return 'custo é obrigatório e deve ser numérico'
   }
-  if (c < 0) return 'custo unitário deve ser maior ou igual a zero'
+  if (c <= 0) {
+    return unidade === 'Kg'
+      ? 'custo por kg deve ser maior que zero'
+      : 'custo por unidade deve ser maior que zero'
+  }
   return null
 }
 
 function payloadFromForm(form) {
+  const custoUnitario =
+    form.unidade === 'Und' && form.modoCusto === 'CAIXA'
+      ? custoCaixaCalculado(form)
+      : Number(form.custoUnitario)
   return {
     nome: form.nome.trim(),
     tipo: form.tipo,
     unidade: form.unidade,
-    custoUnitario: Number(form.custoUnitario),
+    custoUnitario,
     fornecedor: form.fornecedor.trim() === '' ? null : form.fornecedor.trim()
   }
 }
@@ -140,7 +180,11 @@ export default function Insumos() {
         insumo.custoUnitario === null || insumo.custoUnitario === undefined
           ? ''
           : String(Number(insumo.custoUnitario)),
-      fornecedor: insumo.fornecedor ?? ''
+      fornecedor: insumo.fornecedor ?? '',
+      // V1 não persiste valorCaixa/quantidadeCaixa: edição abre sempre em custo direto
+      modoCusto: 'DIRETO',
+      valorCaixa: '',
+      quantidadeCaixa: ''
     })
     setFormError(null)
     setModalOpen(true)
@@ -304,34 +348,115 @@ export default function Insumos() {
                     <option value="Und">Und</option>
                   </select>
                 </div>
-                <div className="form-group" style={{ marginBottom: 12, flex: 1 }}>
-                  <label className="form-label">
-                    {form.unidade === 'Kg'
-                      ? 'Custo por kg (R$)'
-                      : form.unidade === 'Und'
-                      ? 'Custo por unidade (R$)'
-                      : 'Custo unitário (R$)'}
-                  </label>
-                  <input
-                    className="form-input"
-                    type="number"
-                    min="0"
-                    step="0.0001"
-                    value={form.custoUnitario}
-                    onChange={(e) => setForm({ ...form, custoUnitario: e.target.value })}
-                    placeholder="0,00"
-                  />
-                </div>
+                {form.unidade !== 'Und' && (
+                  <div className="form-group" style={{ marginBottom: 12, flex: 1 }}>
+                    <label className="form-label">
+                      {form.unidade === 'Kg' ? 'Custo por kg (R$)' : 'Custo unitário (R$)'}
+                    </label>
+                    <input
+                      className="form-input"
+                      type="number"
+                      min="0"
+                      step="0.0001"
+                      value={form.custoUnitario}
+                      onChange={(e) => setForm({ ...form, custoUnitario: e.target.value })}
+                      placeholder="0,00"
+                    />
+                  </div>
+                )}
               </div>
               {form.unidade === 'Kg' && (
                 <div style={{ fontSize: 11.5, color: '#999', marginTop: -6, marginBottom: 12 }}>
                   Informe o custo de 1 kg. Na ficha técnica, as quantidades serão lançadas em gramas.
                 </div>
               )}
+
               {form.unidade === 'Und' && (
-                <div style={{ fontSize: 11.5, color: '#999', marginTop: -6, marginBottom: 12 }}>
-                  Informe o custo de 1 unidade. Na ficha técnica, as quantidades serão lançadas em unidades.
-                </div>
+                <>
+                  <div className="form-group" style={{ marginBottom: 12 }}>
+                    <label className="form-label">Como deseja informar o custo?</label>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button
+                        type="button"
+                        className={'btn btn-sm ' + (form.modoCusto === 'DIRETO' ? 'btn-primary' : 'btn-secondary')}
+                        onClick={() => setForm({ ...form, modoCusto: 'DIRETO' })}
+                      >
+                        Custo por unidade
+                      </button>
+                      <button
+                        type="button"
+                        className={'btn btn-sm ' + (form.modoCusto === 'CAIXA' ? 'btn-primary' : 'btn-secondary')}
+                        onClick={() => setForm({ ...form, modoCusto: 'CAIXA' })}
+                      >
+                        Caixa / pacote
+                      </button>
+                    </div>
+                  </div>
+
+                  {form.modoCusto === 'DIRETO' ? (
+                    <>
+                      <div className="form-group" style={{ marginBottom: 12 }}>
+                        <label className="form-label">Custo por unidade (R$)</label>
+                        <input
+                          className="form-input"
+                          type="number"
+                          min="0"
+                          step="0.0001"
+                          value={form.custoUnitario}
+                          onChange={(e) => setForm({ ...form, custoUnitario: e.target.value })}
+                          placeholder="0,00"
+                        />
+                      </div>
+                      <div style={{ fontSize: 11.5, color: '#999', marginTop: -6, marginBottom: 12 }}>
+                        Informe o custo de 1 unidade. Na ficha técnica, as quantidades serão lançadas em unidades.
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div style={{ display: 'flex', gap: 12 }}>
+                        <div className="form-group" style={{ marginBottom: 12, flex: 1 }}>
+                          <label className="form-label">Valor da caixa/pacote (R$)</label>
+                          <input
+                            className="form-input"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={form.valorCaixa}
+                            onChange={(e) => setForm({ ...form, valorCaixa: e.target.value })}
+                            placeholder="Ex.: 31,90"
+                          />
+                        </div>
+                        <div className="form-group" style={{ marginBottom: 12, flex: 1 }}>
+                          <label className="form-label">Quantidade na caixa/pacote</label>
+                          <input
+                            className="form-input"
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={form.quantidadeCaixa}
+                            onChange={(e) => setForm({ ...form, quantidadeCaixa: e.target.value })}
+                            placeholder="Ex.: 168"
+                          />
+                        </div>
+                      </div>
+                      <div
+                        className="alert alert-gray"
+                        style={{ marginTop: -2, marginBottom: 12, padding: '8px 12px' }}
+                      >
+                        <div className="alert-msg">
+                          Custo calculado por unidade:{' '}
+                          <strong className="clr-orange">
+                            {custoCaixaCalculado(form) === null ? '—' : brl(custoCaixaCalculado(form))}
+                          </strong>
+                        </div>
+                      </div>
+                      <div style={{ fontSize: 11.5, color: '#999', marginTop: -6, marginBottom: 12 }}>
+                        Use para sachês, embalagens, guardanapos, potes ou itens comprados em pacote
+                        e usados por unidade.
+                      </div>
+                    </>
+                  )}
+                </>
               )}
               <div className="form-group" style={{ marginBottom: 0 }}>
                 <label className="form-label">Fornecedor (opcional)</label>
@@ -511,10 +636,14 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
   const [dadosError, setDadosError] = useState(null)
   const [dadosSaving, setDadosSaving] = useState(false)
 
+  const [showAddIngForm, setShowAddIngForm] = useState(false)
   const [ingId, setIngId] = useState('')
   const [ingQty, setIngQty] = useState('')
   const [ingError, setIngError] = useState(null)
   const [ingSubmitting, setIngSubmitting] = useState(false)
+
+  const [ingParaRemover, setIngParaRemover] = useState(null)
+  const [removendoIng, setRemovendoIng] = useState(false)
 
   const [editingItemId, setEditingItemId] = useState(null)
   const [editingQty, setEditingQty] = useState('')
@@ -592,6 +721,18 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
       .finally(() => setDadosSaving(false))
   }
 
+  function openAddIngForm() {
+    setIngError(null)
+    setShowAddIngForm(true)
+  }
+
+  function cancelAddIng() {
+    setIngId('')
+    setIngQty('')
+    setIngError(null)
+    setShowAddIngForm(false)
+  }
+
   function handleAddIngrediente(e) {
     e.preventDefault()
     setIngError(null)
@@ -614,6 +755,8 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
         applyResponse(res.data)
         setIngId('')
         setIngQty('')
+        setShowAddIngForm(false)
+        setToast({ message: 'Ingrediente adicionado à receita.', type: 'success' })
       })
       .catch((err) =>
         setIngError(err?.response?.data?.error ?? err?.message ?? 'Erro ao adicionar ingrediente.')
@@ -652,8 +795,13 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
   }
 
   function handleDeleteItem(item) {
-    const ok = window.confirm(`Remover "${item.insumo.nome}" da receita?`)
-    if (!ok) return
+    setIngParaRemover(item)
+  }
+
+  function confirmRemoveIngrediente() {
+    const item = ingParaRemover
+    if (!item) return
+    setRemovendoIng(true)
     api
       .delete(`/receitas-producao/itens/${item.id}`)
       .then((res) => {
@@ -666,6 +814,10 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
           type: 'error'
         })
       )
+      .finally(() => {
+        setRemovendoIng(false)
+        setIngParaRemover(null)
+      })
   }
 
   function handleAtualizarCusto() {
@@ -869,83 +1021,16 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
                   </button>
                 </div>
 
-                {/* Seção 4 — Adicionar ingrediente */}
-                <div className="section-title">Adicionar Ingrediente</div>
-                <div className="card">
-                  <form onSubmit={handleAddIngrediente}>
-                    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-                      <div className="form-group" style={{ marginBottom: 0, flex: 2, minWidth: 200 }}>
-                        <label className="form-label">Insumo</label>
-                        <select
-                          className="form-input"
-                          value={ingId}
-                          onChange={(e) => setIngId(e.target.value)}
-                        >
-                          <option value="">— selecione —</option>
-                          {opcoesIngrediente.map((i) => (
-                            <option key={i.id} value={i.id}>
-                              {i.nome} ({brl(i.custoUnitario)} / {i.unidade})
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 110 }}>
-                        <label className="form-label">
-                          {ingUnidade === 'Kg'
-                            ? 'Quantidade usada (g)'
-                            : ingUnidade === 'Und'
-                            ? 'Quantidade usada (und)'
-                            : 'Quantidade usada'}
-                        </label>
-                        <input
-                          className="form-input"
-                          type="number"
-                          min="0"
-                          step="0.001"
-                          value={ingQty}
-                          onChange={(e) => setIngQty(e.target.value)}
-                          placeholder={ingUnidade === 'Kg' ? 'Ex.: 300' : 'Ex.: 1'}
-                        />
-                      </div>
-                      <button type="submit" className="btn btn-primary" disabled={ingSubmitting}>
-                        {ingSubmitting ? 'Adicionando…' : 'Adicionar'}
-                      </button>
-                    </div>
-                    {ingUnidade === 'Kg' && (
-                      <div style={{ fontSize: 11.5, color: '#999', marginTop: 8 }}>
-                        Este insumo é cadastrado por kg. Informe aqui a quantidade em gramas.
-                      </div>
-                    )}
-                    {ingUnidade === 'Und' && (
-                      <div style={{ fontSize: 11.5, color: '#999', marginTop: 8 }}>
-                        Este insumo é cadastrado por unidade. Informe aqui a quantidade de unidades.
-                      </div>
-                    )}
-                    {ingError && (
-                      <div className="alert alert-red" style={{ marginTop: 12, marginBottom: 0 }}>
-                        <div className="alert-msg clr-red">{ingError}</div>
-                      </div>
-                    )}
-                    {opcoesIngrediente.length === 0 && (
-                      <div className="alert alert-yellow" style={{ marginTop: 12, marginBottom: 0 }}>
-                        <div className="alert-msg clr-yellow">
-                          Nenhum insumo disponível como ingrediente. Cadastre insumos comuns primeiro.
-                        </div>
-                      </div>
-                    )}
-                  </form>
-                </div>
-
-                {/* Seção 3 — Ingredientes da receita */}
+                {/* Seção — Ingredientes da receita (com adição integrada) */}
                 <div className="section-title">Ingredientes da Receita</div>
 
-                {itens.length === 0 ? (
-                  <div className="empty-state">
-                    Nenhum ingrediente na receita. Adicione o primeiro ingrediente acima para
-                    calcular o custo da produção própria.
-                  </div>
-                ) : (
-                  <div className="table-card">
+                <div className="table-card">
+                  {itens.length === 0 ? (
+                    <div className="empty-state" style={{ padding: '28px 16px' }}>
+                      Nenhum ingrediente na receita. Adicione o primeiro ingrediente abaixo para
+                      calcular o custo da produção própria.
+                    </div>
+                  ) : (
                     <table className="hb-table">
                       <thead>
                         <tr>
@@ -1028,8 +1113,93 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
                         })}
                       </tbody>
                     </table>
+                  )}
+
+                  {/* Adição integrada à receita (continuação do card) */}
+                  <div className="ficha-add-area">
+                    {!showAddIngForm ? (
+                      <button type="button" className="ficha-add-trigger" onClick={openAddIngForm}>
+                        + Adicionar ingrediente
+                      </button>
+                    ) : (
+                    <>
+                    <div className="ficha-add-title">Adicionar ingrediente</div>
+                    <form onSubmit={handleAddIngrediente}>
+                      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                        <div className="form-group" style={{ marginBottom: 0, flex: 2, minWidth: 200 }}>
+                          <label className="form-label">Insumo</label>
+                          <select
+                            className="form-input"
+                            value={ingId}
+                            onChange={(e) => setIngId(e.target.value)}
+                          >
+                            <option value="">— selecione —</option>
+                            {opcoesIngrediente.map((i) => (
+                              <option key={i.id} value={i.id}>
+                                {i.nome} ({brl(i.custoUnitario)} / {i.unidade})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 110 }}>
+                          <label className="form-label">
+                            {ingUnidade === 'Kg'
+                              ? 'Quantidade usada (g)'
+                              : ingUnidade === 'Und'
+                              ? 'Quantidade usada (und)'
+                              : 'Quantidade usada'}
+                          </label>
+                          <input
+                            className="form-input"
+                            type="number"
+                            min="0"
+                            step="0.001"
+                            value={ingQty}
+                            onChange={(e) => setIngQty(e.target.value)}
+                            placeholder={ingUnidade === 'Kg' ? 'Ex.: 300' : 'Ex.: 1'}
+                          />
+                        </div>
+                        <div style={{ display: 'flex', gap: 6 }}>
+                          <button
+                            type="button"
+                            className="btn btn-secondary"
+                            onClick={cancelAddIng}
+                            disabled={ingSubmitting}
+                          >
+                            Cancelar
+                          </button>
+                          <button type="submit" className="btn btn-primary" disabled={ingSubmitting}>
+                            {ingSubmitting ? 'Adicionando…' : 'Adicionar'}
+                          </button>
+                        </div>
+                      </div>
+                      {ingUnidade === 'Kg' && (
+                        <div style={{ fontSize: 11.5, color: '#999', marginTop: 8 }}>
+                          Este insumo é cadastrado por kg. Informe aqui a quantidade em gramas.
+                        </div>
+                      )}
+                      {ingUnidade === 'Und' && (
+                        <div style={{ fontSize: 11.5, color: '#999', marginTop: 8 }}>
+                          Este insumo é cadastrado por unidade. Informe aqui a quantidade de unidades.
+                        </div>
+                      )}
+                      {ingError && (
+                        <div className="alert alert-red" style={{ marginTop: 12, marginBottom: 0 }}>
+                          <div className="alert-msg clr-red">{ingError}</div>
+                        </div>
+                      )}
+                      {opcoesIngrediente.length === 0 && (
+                        <div className="alert alert-yellow" style={{ marginTop: 12, marginBottom: 0 }}>
+                          <div className="alert-msg clr-yellow">
+                            Nenhum insumo disponível como ingrediente. Cadastre insumos comuns primeiro.
+                          </div>
+                        </div>
+                      )}
+                    </form>
+                    </>
+                    )}
                   </div>
-                )}
+                </div>
 
                 {editError && (
                   <div className="alert alert-red" style={{ marginTop: 10 }}>
@@ -1040,6 +1210,23 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
             )}
           </>
         )}
+
+        <ConfirmDialog
+          open={ingParaRemover !== null}
+          title="Remover ingrediente da receita?"
+          message={
+            ingParaRemover
+              ? `Você está prestes a remover "${ingParaRemover.insumo?.nome}" desta receita.`
+              : ''
+          }
+          description="Essa ação recalcula o custo da receita e pode alterar o custo unitário calculado."
+          confirmLabel="Remover ingrediente"
+          cancelLabel="Cancelar"
+          variant="danger"
+          loading={removendoIng}
+          onConfirm={confirmRemoveIngrediente}
+          onCancel={() => setIngParaRemover(null)}
+        />
 
         <Toast
           message={toast?.message}
