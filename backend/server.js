@@ -743,8 +743,7 @@ app.post('/api/produtos/:produtoId/ficha-tecnica/itens', async (req, res) => {
       return res.status(400).json({ error: 'produtoId inválido' });
     }
 
-    const { insumoId, quantidade, tipoUso, formaRateio, quantidadeAtendida, aplicarMargem } =
-      req.body ?? {};
+    const { insumoId, quantidade, tipoUso, formaRateio, quantidadeAtendida } = req.body ?? {};
 
     if (!Number.isInteger(Number(insumoId)) || Number(insumoId) <= 0) {
       return res.status(400).json({ error: 'insumoId inválido' });
@@ -767,14 +766,17 @@ app.post('/api/produtos/:produtoId/ficha-tecnica/itens', async (req, res) => {
     }
 
     const defaults = defaultsUsoPorTipoInsumo(insumo.tipo);
+    const tipoUsoFinal = tipoUso ?? defaults.tipoUso;
     const merged = {
-      tipoUso: tipoUso ?? defaults.tipoUso,
+      tipoUso: tipoUsoFinal,
       formaRateio: formaRateio ?? 'POR_PRODUTO',
       quantidadeAtendida:
         quantidadeAtendida === undefined || quantidadeAtendida === null || quantidadeAtendida === ''
           ? null
           : Number(quantidadeAtendida),
-      aplicarMargem: aplicarMargem === undefined ? defaults.aplicarMargem : aplicarMargem
+      // Regra automática: apenas INGREDIENTE entra na base do preço sugerido.
+      // O valor enviado no payload é ignorado para evitar inconsistência.
+      aplicarMargem: tipoUsoFinal === 'INGREDIENTE'
     };
     if (merged.formaRateio === 'POR_PRODUTO') {
       merged.quantidadeAtendida = null;
@@ -821,8 +823,7 @@ app.put('/api/ficha-tecnica/itens/:id', async (req, res) => {
       return res.status(400).json({ error: 'id inválido' });
     }
 
-    const { quantidade, tipoUso, formaRateio, quantidadeAtendida, aplicarMargem } =
-      req.body ?? {};
+    const { quantidade, tipoUso, formaRateio, quantidadeAtendida } = req.body ?? {};
 
     const existing = await prisma.fichaTecnicaItem.findUnique({ where: { id } });
     if (!existing) {
@@ -842,13 +843,17 @@ app.put('/api/ficha-tecnica/itens/:id', async (req, res) => {
     }
     if (tipoUso !== undefined) data.tipoUso = tipoUso;
     if (formaRateio !== undefined) data.formaRateio = formaRateio;
-    if (aplicarMargem !== undefined) data.aplicarMargem = aplicarMargem;
     if (quantidadeAtendida !== undefined) {
       data.quantidadeAtendida =
         quantidadeAtendida === null || quantidadeAtendida === ''
           ? null
           : Number(quantidadeAtendida);
     }
+
+    // Regra automática: aplicarMargem é derivado do tipoUso final (payload é ignorado).
+    // Apenas INGREDIENTE entra na base do preço sugerido; ao salvar, itens antigos
+    // fora da regra são corrigidos automaticamente.
+    data.aplicarMargem = (data.tipoUso ?? existing.tipoUso) === 'INGREDIENTE';
 
     // Valida o estado final do item (campos novos mesclados com os atuais)
     const merged = {
@@ -860,7 +865,7 @@ app.put('/api/ficha-tecnica/itens/:id', async (req, res) => {
           : existing.quantidadeAtendida === null
           ? null
           : Number(existing.quantidadeAtendida),
-      aplicarMargem: data.aplicarMargem ?? existing.aplicarMargem
+      aplicarMargem: data.aplicarMargem
     };
     if (merged.formaRateio === 'POR_PRODUTO') {
       merged.quantidadeAtendida = null;

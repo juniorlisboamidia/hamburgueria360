@@ -150,7 +150,7 @@ a { text-decoration: none; color: inherit; }
   margin-top: 16px;
 }
 .modal-card-large {
-  max-width: 980px;
+  max-width: 1240px;
   width: calc(100vw - 48px);
   max-height: calc(100vh - 48px);
   overflow-y: auto;
@@ -259,6 +259,23 @@ a { text-decoration: none; color: inherit; }
 .hb-table td { padding: 11px 14px; font-size: 13px; color: #333; border-bottom: 0.5px solid #f7f7f7; }
 .hb-table tr:last-child td { border-bottom: none; }
 .hb-table tr:hover td { background: #fef8f4; }
+.hb-table-compact th { padding: 9px 10px; }
+.hb-table-compact td { padding: 8px 10px; }
+
+/* Área de adição integrada à ficha técnica (continuação do table-card) */
+.ficha-add-area {
+  border-top: 1px solid #f0f0f0;
+  background: #fafafa;
+  padding: 12px 14px 14px;
+}
+.ficha-add-title {
+  font-size: 10px;
+  font-weight: 600;
+  color: #aaa;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin-bottom: 10px;
+}
 
 /* Botões */
 .btn {
@@ -271,6 +288,7 @@ a { text-decoration: none; color: inherit; }
 .btn-primary   { background: #f97316; color: #fff; }
 .btn-secondary { background: #f5f5f5; color: #555; border: 1px solid #e8e8e8; }
 .btn-danger    { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
+.btn-sm        { padding: 5px 10px; font-size: 12px; border-radius: 7px; }
 
 /* Alertas */
 .alert { border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; display: flex; gap: 10px; align-items: flex-start; }

@@ -861,12 +861,23 @@ const ATENDIDA_LABEL = {
   POR_PEDIDO: 'Produtos médios por pedido'
 }
 
-// Sugestões de uso a partir do tipo do insumo (mesma regra do backend)
+// Sugestão de uso a partir do tipo do insumo (mesma regra do backend)
 function sugestaoUso(tipoInsumo) {
-  if (tipoInsumo === 'EMBALAGEM') return { tipoUso: 'EMBALAGEM', aplicarMargem: false }
-  if (tipoInsumo === 'ACOMPANHAMENTO') return { tipoUso: 'ACOMPANHAMENTO', aplicarMargem: false }
-  if (tipoInsumo === 'OPERACIONAL') return { tipoUso: 'OPERACIONAL', aplicarMargem: false }
-  return { tipoUso: 'INGREDIENTE', aplicarMargem: true }
+  if (tipoInsumo === 'EMBALAGEM') return 'EMBALAGEM'
+  if (tipoInsumo === 'ACOMPANHAMENTO') return 'ACOMPANHAMENTO'
+  if (tipoInsumo === 'OPERACIONAL') return 'OPERACIONAL'
+  return 'INGREDIENTE'
+}
+
+// Regra automática (mesma do backend): só ingrediente entra na base do preço sugerido
+function aplicaMargemPorTipoUso(tipoUso) {
+  return tipoUso === 'INGREDIENTE'
+}
+
+function ComposicaoBadge({ aplicarMargem }) {
+  return aplicarMargem
+    ? <span className="badge badge-green">Preço sugerido</span>
+    : <span className="badge badge-gray">Custo embutido</span>
 }
 
 function FichaModal({ produtoId, onClose, onChanged }) {
@@ -895,7 +906,6 @@ function FichaModal({ produtoId, onClose, onChanged }) {
   const [formTipoUso, setFormTipoUso] = useState('INGREDIENTE')
   const [formRateio, setFormRateio] = useState('POR_PRODUTO')
   const [formAtendida, setFormAtendida] = useState('')
-  const [formMargem, setFormMargem] = useState(true)
   const [itemError, setItemError] = useState(null)
   const [itemSubmitting, setItemSubmitting] = useState(false)
 
@@ -988,9 +998,7 @@ function FichaModal({ produtoId, onClose, onChanged }) {
     setFormInsumoId(value)
     const ins = insumos.find((x) => String(x.id) === value)
     if (ins) {
-      const sug = sugestaoUso(ins.tipo)
-      setFormTipoUso(sug.tipoUso)
-      setFormMargem(sug.aplicarMargem)
+      setFormTipoUso(sugestaoUso(ins.tipo))
     }
   }
 
@@ -1000,7 +1008,6 @@ function FichaModal({ produtoId, onClose, onChanged }) {
     setFormTipoUso('INGREDIENTE')
     setFormRateio('POR_PRODUTO')
     setFormAtendida('')
-    setFormMargem(true)
   }
 
   function handleAddItem(e) {
@@ -1030,7 +1037,7 @@ function FichaModal({ produtoId, onClose, onChanged }) {
         tipoUso: formTipoUso,
         formaRateio: formRateio,
         quantidadeAtendida: formRateio === 'POR_PRODUTO' ? null : Number(formAtendida),
-        aplicarMargem: formMargem
+        aplicarMargem: aplicaMargemPorTipoUso(formTipoUso)
       })
       .then(() => {
         resetItemForm()
@@ -1059,8 +1066,7 @@ function FichaModal({ produtoId, onClose, onChanged }) {
       quantidadeAtendida:
         item.quantidadeAtendida === null || item.quantidadeAtendida === undefined
           ? ''
-          : String(Number(item.quantidadeAtendida)),
-      aplicarMargem: item.aplicarMargem ?? true
+          : String(Number(item.quantidadeAtendida))
     })
     setEditError(null)
   }
@@ -1091,7 +1097,7 @@ function FichaModal({ produtoId, onClose, onChanged }) {
         formaRateio: editForm.formaRateio,
         quantidadeAtendida:
           editForm.formaRateio === 'POR_PRODUTO' ? null : Number(editForm.quantidadeAtendida),
-        aplicarMargem: editForm.aplicarMargem
+        aplicarMargem: aplicaMargemPorTipoUso(editForm.tipoUso)
       })
       .then(() => {
         cancelEditItem()
@@ -1359,25 +1365,23 @@ function FichaModal({ produtoId, onClose, onChanged }) {
             {/* Seção 4 — Ficha técnica */}
             <div className="section-title">Ficha Técnica</div>
 
-            {itens.length === 0 ? (
-              <div className="empty-state">
-                Ficha técnica vazia. Adicione o primeiro insumo no formulário abaixo — assim que houver
-                pelo menos um item, o CMV e a margem serão recalculados.
-              </div>
-            ) : (
-              <>
-                <div className="table-card">
-                  <table className="hb-table">
+            <div className="table-card">
+              {itens.length === 0 ? (
+                <div className="empty-state" style={{ padding: '28px 16px' }}>
+                  Ficha técnica vazia. Adicione o primeiro insumo no formulário abaixo — assim que
+                  houver pelo menos um item, o CMV e a margem serão recalculados.
+                </div>
+              ) : (
+                  <table className="hb-table hb-table-compact">
                     <thead>
                       <tr>
                         <th>Insumo</th>
-                        <th>Tipo de uso</th>
-                        <th>Unidade</th>
-                        <th>Custo unitário</th>
-                        <th>Quantidade</th>
-                        <th>Forma de rateio</th>
-                        <th>Qtde. atendida</th>
-                        <th>Margem?</th>
+                        <th>Uso</th>
+                        <th>Custo unit.</th>
+                        <th>Qtd.</th>
+                        <th>Rateio</th>
+                        <th>Qtd. atendida</th>
+                        <th>Composição</th>
                         <th>Custo aplicado</th>
                         <th style={{ textAlign: 'right' }}>Ações</th>
                       </tr>
@@ -1407,7 +1411,7 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                               {isEditing ? (
                                 <select
                                   className="form-input"
-                                  style={{ ...cellInputStyle, width: 140 }}
+                                  style={{ ...cellInputStyle, width: 118 }}
                                   value={editForm.tipoUso}
                                   onChange={(e) => setEditForm({ ...editForm, tipoUso: e.target.value })}
                                 >
@@ -1421,13 +1425,12 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                                 </span>
                               )}
                             </td>
-                            <td style={{ color: '#888' }}>{item.insumo.unidade}</td>
                             <td>{brl(custoUnit)}</td>
                             <td>
                               {isEditing ? (
                                 <input
                                   className="form-input"
-                                  style={{ ...cellInputStyle, width: 90 }}
+                                  style={{ ...cellInputStyle, width: 76 }}
                                   type="number"
                                   min="0"
                                   step="0.0001"
@@ -1445,7 +1448,7 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                               {isEditing ? (
                                 <select
                                   className="form-input"
-                                  style={{ ...cellInputStyle, width: 140 }}
+                                  style={{ ...cellInputStyle, width: 126 }}
                                   value={editForm.formaRateio}
                                   onChange={(e) => setEditForm({ ...editForm, formaRateio: e.target.value })}
                                 >
@@ -1466,7 +1469,7 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                                 ) : (
                                   <input
                                     className="form-input"
-                                    style={{ ...cellInputStyle, width: 80 }}
+                                    style={{ ...cellInputStyle, width: 70 }}
                                     type="number"
                                     min="0"
                                     step="0.001"
@@ -1484,19 +1487,13 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                               )}
                             </td>
                             <td>
-                              {isEditing ? (
-                                <input
-                                  type="checkbox"
-                                  checked={editForm.aplicarMargem}
-                                  onChange={(e) =>
-                                    setEditForm({ ...editForm, aplicarMargem: e.target.checked })
-                                  }
-                                />
-                              ) : item.aplicarMargem ? (
-                                <span className="badge badge-green">Sim</span>
-                              ) : (
-                                <span className="badge badge-gray">Não</span>
-                              )}
+                              <ComposicaoBadge
+                                aplicarMargem={
+                                  isEditing
+                                    ? aplicaMargemPorTipoUso(editForm.tipoUso)
+                                    : item.aplicarMargem
+                                }
+                              />
                             </td>
                             <td className="clr-orange" style={{ fontWeight: 600 }}>
                               {brl(custoAplicadoExibido)}
@@ -1505,19 +1502,19 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                               <div style={{ display: 'inline-flex', gap: 6 }}>
                                 {isEditing ? (
                                   <>
-                                    <button type="button" className="btn btn-primary" onClick={saveEditItem} disabled={editSubmitting}>
+                                    <button type="button" className="btn btn-primary btn-sm" onClick={saveEditItem} disabled={editSubmitting}>
                                       {editSubmitting ? 'Salvando…' : 'Salvar'}
                                     </button>
-                                    <button type="button" className="btn btn-secondary" onClick={cancelEditItem} disabled={editSubmitting}>
+                                    <button type="button" className="btn btn-secondary btn-sm" onClick={cancelEditItem} disabled={editSubmitting}>
                                       Cancelar
                                     </button>
                                   </>
                                 ) : (
                                   <>
-                                    <button type="button" className="btn btn-secondary" onClick={() => startEditItem(item)}>
+                                    <button type="button" className="btn btn-secondary btn-sm" onClick={() => startEditItem(item)}>
                                       Editar
                                     </button>
-                                    <button type="button" className="btn btn-danger" onClick={() => handleDeleteItem(item)}>
+                                    <button type="button" className="btn btn-danger btn-sm" onClick={() => handleDeleteItem(item)}>
                                       Remover
                                     </button>
                                   </>
@@ -1529,38 +1526,12 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                       })}
                     </tbody>
                   </table>
-                </div>
+              )}
 
-                {editError && (
-                  <div className="alert alert-red" style={{ marginTop: 10 }}>
-                    <div className="alert-msg clr-red">{editError}</div>
-                  </div>
-                )}
-
-                <div
-                  style={{
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    marginTop: 12,
-                    padding: '14px 18px',
-                    background: '#fff',
-                    border: '0.5px solid #e8e8e8',
-                    borderRadius: 12,
-                    fontSize: 13,
-                    color: '#555'
-                  }}
-                >
-                  <span>Custo total da ficha técnica</span>
-                  <strong className="clr-orange" style={{ fontSize: 18 }}>{brl(custoTotal)}</strong>
-                </div>
-              </>
-            )}
-
-            {/* Seção 5 — Adicionar item */}
-            <div className="section-title">Adicionar Item</div>
-            <div className="card">
-              <form onSubmit={handleAddItem}>
+              {/* Adição integrada à ficha (continuação do card) */}
+              <div className="ficha-add-area">
+                <div className="ficha-add-title">Adicionar novo item</div>
+                <form onSubmit={handleAddItem}>
                 <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
                   <div className="form-group" style={{ marginBottom: 0, flex: 2, minWidth: 200 }}>
                     <label className="form-label">Insumo</label>
@@ -1633,19 +1604,11 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                       />
                     </div>
                   )}
-                  <div className="form-group" style={{ marginBottom: 0, minWidth: 110 }}>
-                    <label className="form-label">Aplicar margem?</label>
-                    <label
-                      className="form-input"
-                      style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={formMargem}
-                        onChange={(e) => setFormMargem(e.target.checked)}
-                      />
-                      <span style={{ fontSize: 13, color: '#555' }}>{formMargem ? 'Sim' : 'Não'}</span>
-                    </label>
+                  <div className="form-group" style={{ marginBottom: 0, minWidth: 130 }}>
+                    <label className="form-label">Composição</label>
+                    <div style={{ display: 'flex', alignItems: 'center', minHeight: 37 }}>
+                      <ComposicaoBadge aplicarMargem={aplicaMargemPorTipoUso(formTipoUso)} />
+                    </div>
                   </div>
                   <button type="submit" className="btn btn-primary" disabled={itemSubmitting}>
                     {itemSubmitting ? 'Adicionando…' : 'Adicionar item'}
@@ -1673,8 +1636,35 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                     </div>
                   </div>
                 )}
-              </form>
+                </form>
+              </div>
             </div>
+
+            {editError && (
+              <div className="alert alert-red" style={{ marginTop: 10 }}>
+                <div className="alert-msg clr-red">{editError}</div>
+              </div>
+            )}
+
+            {itens.length > 0 && (
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  marginTop: 12,
+                  padding: '14px 18px',
+                  background: '#fff',
+                  border: '0.5px solid #e8e8e8',
+                  borderRadius: 12,
+                  fontSize: 13,
+                  color: '#555'
+                }}
+              >
+                <span>Custo total da ficha técnica</span>
+                <strong className="clr-orange" style={{ fontSize: 18 }}>{brl(custoTotal)}</strong>
+              </div>
+            )}
             </>
             )}
           </>
