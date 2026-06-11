@@ -1243,6 +1243,8 @@ function FichaModal({ produtoId, onClose, onChanged }) {
               </button>
             </div>
 
+            {/* Wrapper comum: as duas abas vivem no MESMO painel com altura padronizada */}
+            <div className="product-tab-panel">
             {activeTab === 'PRECIFICACAO' && (
             <>
             {/* Seção 1 — Dados do produto */}
@@ -1727,6 +1729,7 @@ function FichaModal({ produtoId, onClose, onChanged }) {
             )}
             </>
             )}
+            </div>
           </>
         )}
 

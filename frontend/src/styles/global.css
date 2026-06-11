@@ -446,6 +446,21 @@ a { text-decoration: none; color: inherit; }
 .modal-tab:hover { color: #555; }
 .modal-tab.active { color: #f97316; border-bottom-color: #f97316; }
 
+/* Painel ÚNICO que envolve o conteúdo das duas abas do modal de produto
+   (PRECIFICAÇÃO e FICHA TÉCNICA). No desktop a altura é FIXA — alternar abas não
+   muda o tamanho do modal nem 1px; conteúdo maior rola dentro do painel. Em telas
+   menores vira piso flexível limitado pela viewport para não estourar. */
+.product-tab-panel {
+  min-height: min(720px, calc(100vh - 210px));
+}
+@media (min-width: 900px) {
+  .product-tab-panel {
+    height: min(760px, calc(100vh - 210px));
+    min-height: 0;
+    overflow-y: auto;
+  }
+}
+
 /* Estados */
 .loading-state { text-align: center; padding: 48px; color: #aaa; font-size: 14px; }
 .empty-state   { text-align: center; padding: 48px; color: #aaa; font-size: 14px; }
