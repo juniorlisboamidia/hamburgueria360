@@ -244,6 +244,43 @@ app.delete('/api/insumos/:id', async (req, res) => {
 
 const round4 = (n) => Number(n.toFixed(4));
 
+// Normaliza a unidade do rendimento da receita (inclui g e ml, além das unidades de insumo)
+function normalizeUnidadeRendimento(u) {
+  const v = String(u ?? '').trim().toLowerCase();
+  if (['g', 'gr', 'grama', 'gramas'].includes(v)) return 'g';
+  if (['ml', 'mililitro', 'mililitros'].includes(v)) return 'ml';
+  if (['kg', 'kgs', 'kilo', 'quilo', 'quilograma'].includes(v)) return 'Kg';
+  if (['l', 'lt', 'litro', 'litros'].includes(v)) return 'L';
+  if (['und', 'un', 'u', 'unid', 'unidade', 'unidades'].includes(v)) return 'Und';
+  if (['porcoes', 'porções', 'porcao', 'porção', 'porc'].includes(v)) return 'Porções';
+  return null;
+}
+
+// Converte o rendimento informado para a unidade base do insumo produzido.
+// Retorna null quando a unidade do rendimento é incompatível com a do insumo.
+function rendimentoBaseReceita(rendimento, unidadeRendimento, unidadeInsumoProduzido) {
+  const r = Number(rendimento);
+  if (!Number.isFinite(r) || r <= 0) return null;
+  const ui = normalizeUnidade(unidadeInsumoProduzido);
+  const ur = normalizeUnidadeRendimento(unidadeRendimento);
+  if (ui === 'Kg') {
+    if (ur === 'g') return r / 1000;
+    if (ur === 'Kg') return r;
+    return null;
+  }
+  if (ui === 'L') {
+    if (ur === 'ml') return r / 1000;
+    if (ur === 'L') return r;
+    return null;
+  }
+  if (ui === 'Und') {
+    if (ur === 'Und' || ur === 'Porções') return r;
+    return null;
+  }
+  // unidade do insumo desconhecida (legado): usa o rendimento direto
+  return r;
+}
+
 function computeReceita(receita) {
   // Mesma regra da ficha técnica: ingrediente em Kg tem quantidade informada em gramas
   const itens = receita.itens.map((item) => ({
@@ -256,23 +293,44 @@ function computeReceita(receita) {
   }));
   const custoTotalReceita = round4(itens.reduce((s, i) => s + i.custoItem, 0));
   const rendimento = Number(receita.rendimento);
+  // Rendimento convertido para a unidade base do insumo produzido (ex.: 3800 g → 3,8 Kg).
+  // null = rendimento não informado ou unidade incompatível com o insumo.
+  const rendimentoBase = rendimentoBaseReceita(
+    receita.rendimento,
+    receita.unidadeRendimento,
+    receita.insumo?.unidade
+  );
   const custoPorRendimento =
-    rendimento > 0 ? round4(custoTotalReceita / rendimento) : null;
+    rendimentoBase !== null && rendimentoBase > 0
+      ? round4(custoTotalReceita / rendimentoBase)
+      : null;
   const pesoPorcao =
     receita.pesoPorcao === null || receita.pesoPorcao === undefined
       ? null
       : Number(receita.pesoPorcao);
   const custoPorPorcao =
-    pesoPorcao && pesoPorcao > 0 && rendimento > 0
-      ? round4((custoTotalReceita / rendimento) * pesoPorcao)
+    pesoPorcao && pesoPorcao > 0 && custoPorRendimento !== null
+      ? round4(custoPorRendimento * pesoPorcao)
       : null;
-  return { ...receita, itens, custoTotalReceita, custoPorRendimento, custoPorPorcao };
+  return {
+    ...receita,
+    insumo: receita.insumo ? insumoComUnidadeNormalizada(receita.insumo) : receita.insumo,
+    itens,
+    custoTotalReceita,
+    rendimentoBase: rendimentoBase === null ? null : round4(rendimentoBase),
+    rendimentoIncompativel: rendimento > 0 && rendimentoBase === null,
+    custoPorRendimento,
+    custoPorPorcao
+  };
 }
 
 async function getReceitaCompleta(insumoId) {
   const receita = await prisma.receitaProducao.findUnique({
     where: { insumoId },
-    include: { itens: { include: { insumo: true }, orderBy: { id: 'asc' } } }
+    include: {
+      itens: { include: { insumo: true }, orderBy: { id: 'asc' } },
+      insumo: true
+    }
   });
   return receita ? computeReceita(receita) : null;
 }
@@ -324,14 +382,22 @@ app.post('/api/insumos/:id/receita', async (req, res) => {
     const { rendimento, unidadeRendimento, pesoPorcao, unidadePorcao, observacoes } =
       req.body ?? {};
 
-    if (rendimento === undefined || rendimento === null || isNaN(Number(rendimento))) {
-      return res.status(400).json({ error: 'rendimento é obrigatório e deve ser numérico' });
+    // Rendimento agora é opcional: 0 = ainda não informado. Isso permite criar a
+    // receita e adicionar ingredientes antes de saber o rendimento final; o custo
+    // unitário calculado só existe quando rendimento > 0 (computeReceita já trata).
+    let rendimentoFinal = 0;
+    if (rendimento !== undefined && rendimento !== null && rendimento !== '') {
+      if (isNaN(Number(rendimento)) || Number(rendimento) < 0) {
+        return res.status(400).json({ error: 'rendimento deve ser numérico e maior ou igual a zero' });
+      }
+      rendimentoFinal = Number(rendimento);
     }
-    if (Number(rendimento) <= 0) {
-      return res.status(400).json({ error: 'rendimento deve ser maior que zero' });
-    }
-    if (typeof unidadeRendimento !== 'string' || unidadeRendimento.trim() === '') {
-      return res.status(400).json({ error: 'unidadeRendimento é obrigatória' });
+    const unidadeRendimentoFinal =
+      typeof unidadeRendimento === 'string' ? unidadeRendimento.trim() : '';
+    if (rendimentoFinal > 0 && unidadeRendimentoFinal === '') {
+      return res.status(400).json({
+        error: 'unidadeRendimento é obrigatória quando o rendimento é informado'
+      });
     }
     if (pesoPorcao !== undefined && pesoPorcao !== null && pesoPorcao !== '') {
       if (isNaN(Number(pesoPorcao)) || Number(pesoPorcao) <= 0) {
@@ -340,8 +406,8 @@ app.post('/api/insumos/:id/receita', async (req, res) => {
     }
 
     const data = {
-      rendimento: Number(rendimento),
-      unidadeRendimento: unidadeRendimento.trim(),
+      rendimento: rendimentoFinal,
+      unidadeRendimento: unidadeRendimentoFinal,
       pesoPorcao:
         pesoPorcao === undefined || pesoPorcao === null || pesoPorcao === ''
           ? null
@@ -524,7 +590,11 @@ app.post('/api/insumos/:id/receita/atualizar-custo', async (req, res) => {
       });
     }
     if (receita.custoPorRendimento === null) {
-      return res.status(400).json({ error: 'rendimento inválido para cálculo de custo' });
+      return res.status(400).json({
+        error: receita.rendimentoIncompativel
+          ? 'A unidade do rendimento não é compatível com a unidade cadastrada para este insumo. Ajuste a unidade do rendimento ou edite a unidade do insumo produzido.'
+          : 'Informe o rendimento da receita para calcular o custo do insumo.'
+      });
     }
 
     const atualizado = await prisma.insumo.update({

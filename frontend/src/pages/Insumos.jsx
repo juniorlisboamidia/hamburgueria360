@@ -3,6 +3,7 @@ import api from '../services/api'
 import Card from '../components/Card'
 import Toast from '../components/Toast'
 import ConfirmDialog from '../components/ConfirmDialog'
+import InsumoAutocomplete from '../components/InsumoAutocomplete'
 
 const brlFormatter = new Intl.NumberFormat('pt-BR', {
   style: 'currency',
@@ -34,6 +35,49 @@ function sufixoQuantidade(unidadeInsumo) {
   if (u === 'Kg') return 'g'
   if (u === 'L') return 'ml'
   return 'und'
+}
+
+// Unidades controladas do rendimento da receita e da porção.
+// O rendimento aceita unidades menores (g/ml): o backend converte para a unidade
+// base do insumo produzido (3800 g → 3,8 Kg) antes de calcular o custo unitário.
+const UNIDADES_RENDIMENTO = ['g', 'Kg', 'ml', 'L', 'Und', 'Porções']
+const UNIDADES_PORCAO = ['g', 'ml', 'und', 'porção']
+const SUGESTAO_UNIDADE_PORCAO = {
+  g: 'g', Kg: 'g', ml: 'ml', L: 'ml', Und: 'und', 'Porções': 'porção'
+}
+
+function unidadeRendimentoCanonica(u) {
+  const v = String(u ?? '').trim().toLowerCase()
+  if (['g', 'gr', 'grama', 'gramas'].includes(v)) return 'g'
+  if (['ml', 'mililitro', 'mililitros'].includes(v)) return 'ml'
+  if (['kg', 'kgs', 'kilo', 'quilo', 'quilograma'].includes(v)) return 'Kg'
+  if (['l', 'lt', 'litro', 'litros'].includes(v)) return 'L'
+  if (['und', 'un', 'u', 'unid', 'unidade', 'unidades'].includes(v)) return 'Und'
+  if (['porcoes', 'porções', 'porcao', 'porção', 'porc'].includes(v)) return 'Porções'
+  return null
+}
+function unidadePorcaoCanonica(u) {
+  const v = String(u ?? '').trim().toLowerCase()
+  if (['g', 'gr', 'grama', 'gramas'].includes(v)) return 'g'
+  if (['ml', 'mililitro', 'mililitros'].includes(v)) return 'ml'
+  if (['und', 'un', 'unidade'].includes(v)) return 'und'
+  if (['porcao', 'porção'].includes(v)) return 'porção'
+  return null
+}
+
+// Custo da porção exibido no resumo (apenas exibição): o custo unitário calculado
+// é por unidade base do insumo produzido (Kg/L/Und), então porção em g/ml divide
+// por 1000 quando o insumo é Kg/L. Demais casos usam o valor direto.
+function custoPorcaoExibido(receita, unidadeInsumoProduzido) {
+  if (!receita) return null
+  const cpr = receita.custoPorRendimento
+  const peso = Number(receita.pesoPorcao)
+  if (cpr === null || cpr === undefined || !Number.isFinite(peso) || peso <= 0) return null
+  const ui = unidadeNormalizada(unidadeInsumoProduzido)
+  const up = unidadePorcaoCanonica(receita.unidadePorcao)
+  const fator =
+    (ui === 'Kg' && up === 'g') || (ui === 'L' && up === 'ml') ? peso / 1000 : peso
+  return Number(cpr) * fator
 }
 
 const TIPOS = [
@@ -725,14 +769,20 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
     setInsumo(data.insumo)
     setReceita(data.receita)
     if (data.receita) {
+      const rendimentoNum = Number(data.receita.rendimento)
       setDadosForm({
-        rendimento: String(Number(data.receita.rendimento)),
-        unidadeRendimento: data.receita.unidadeRendimento ?? '',
+        // rendimento 0 = ainda não informado (receita criada antes do rendimento)
+        rendimento: rendimentoNum > 0 ? String(rendimentoNum) : '',
+        unidadeRendimento:
+          unidadeRendimentoCanonica(data.receita.unidadeRendimento) ??
+          (data.receita.unidadeRendimento ?? ''),
         pesoPorcao:
           data.receita.pesoPorcao === null || data.receita.pesoPorcao === undefined
             ? ''
             : String(Number(data.receita.pesoPorcao)),
-        unidadePorcao: data.receita.unidadePorcao ?? '',
+        unidadePorcao:
+          unidadePorcaoCanonica(data.receita.unidadePorcao) ??
+          (data.receita.unidadePorcao ?? ''),
         observacoes: data.receita.observacoes ?? ''
       })
     }
@@ -754,6 +804,20 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
   }
 
   useEffect(() => { loadAll() }, [insumoId])
+
+  // Ao trocar a unidade do rendimento, sugere a unidade da porção compatível
+  // (não bloqueia: só substitui se o campo estiver vazio ou com outra sugestão padrão)
+  function handleChangeUnidadeRendimento(value) {
+    const sugestao = SUGESTAO_UNIDADE_PORCAO[value]
+    setDadosForm((f) => ({
+      ...f,
+      unidadeRendimento: value,
+      unidadePorcao:
+        sugestao && (f.unidadePorcao === '' || UNIDADES_PORCAO.includes(f.unidadePorcao))
+          ? sugestao
+          : f.unidadePorcao
+    }))
+  }
 
   function handleSaveDados(e) {
     e.preventDefault()
@@ -806,7 +870,7 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
     e.preventDefault()
     setIngError(null)
     if (!ingId) {
-      setIngError('Selecione um insumo.')
+      setIngError('Selecione um insumo válido.')
       return
     }
     const q = Number(ingQty)
@@ -815,11 +879,19 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
       return
     }
     setIngSubmitting(true)
-    api
-      .post(`/insumos/${insumoId}/receita/itens`, {
-        insumoId: Number(ingId),
-        quantidade: q
-      })
+    // Ingredientes podem ser adicionados antes do rendimento: se a receita ainda
+    // não existe, cria uma receita inicial vazia (rendimento 0 = não informado).
+    const garantirReceita =
+      receita === null
+        ? api.post(`/insumos/${insumoId}/receita`, { rendimento: 0, unidadeRendimento: '' })
+        : Promise.resolve(null)
+    garantirReceita
+      .then(() =>
+        api.post(`/insumos/${insumoId}/receita/itens`, {
+          insumoId: Number(ingId),
+          quantidade: q
+        })
+      )
       .then((res) => {
         applyResponse(res.data)
         setIngId('')
@@ -890,6 +962,21 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
   }
 
   function handleAtualizarCusto() {
+    const rendimentoValido = receita && Number(receita.rendimento) > 0
+    const custoCalculado =
+      rendimentoValido &&
+      receita.custoPorRendimento !== null &&
+      receita.custoPorRendimento !== undefined
+    if (!receita || receita.itens.length === 0 || !custoCalculado) {
+      setToast({
+        message:
+          rendimentoValido && receita?.rendimentoIncompativel
+            ? 'A unidade do rendimento não é compatível com a unidade cadastrada para este insumo. Ajuste a unidade do rendimento ou edite a unidade do insumo produzido.'
+            : 'Informe o rendimento da receita para calcular o custo do insumo.',
+        type: 'info'
+      })
+      return
+    }
     setCustoSaving(true)
     api
       .post(`/insumos/${insumoId}/receita/atualizar-custo`)
@@ -917,17 +1004,43 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
   const ingSelecionado = opcoesIngrediente.find((i) => String(i.id) === ingId)
   const ingUnidade = ingSelecionado ? unidadeNormalizada(ingSelecionado.unidade) : null
 
+  // Resumo do custo: rendimento 0/ausente = "não informado" (custo unitário pendente).
+  // O custo unitário calculado é sempre por unidade base do insumo produzido.
+  const temRendimento = receita !== null && Number(receita.rendimento) > 0
+  const unidadeRendimentoExibida = receita
+    ? (unidadeRendimentoCanonica(receita.unidadeRendimento) ?? receita.unidadeRendimento ?? '')
+    : ''
+  const unidadeInsumoProduzido = unidadeNormalizada(insumo?.unidade) ?? (insumo?.unidade ?? '')
+  const rendimentoBase =
+    receita?.rendimentoBase === null || receita?.rendimentoBase === undefined
+      ? null
+      : Number(receita.rendimentoBase)
+  const rendimentoIncompativel = temRendimento && receita?.rendimentoIncompativel === true
+  const rendimentoConvertido =
+    temRendimento &&
+    rendimentoBase !== null &&
+    unidadeRendimentoExibida !== unidadeInsumoProduzido
+  const custoUnitarioCalculado =
+    temRendimento &&
+    receita.custoPorRendimento !== null &&
+    receita.custoPorRendimento !== undefined
+      ? Number(receita.custoPorRendimento)
+      : null
+  const custoPorcaoResumo = temRendimento
+    ? custoPorcaoExibido(receita, insumo?.unidade)
+    : null
+
   return (
     <div className="modal-overlay">
       <div className="modal modal-card-large">
         <div className="modal-header">
-          <div>
-            <div style={{ fontSize: 17, fontWeight: 600, color: '#111' }}>
-              Receita de produção própria
-            </div>
-            <div style={{ fontSize: 12.5, color: '#999', marginTop: 2 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 18, fontWeight: 600, color: '#111' }}>
               {insumo?.nome ?? '…'}
-            </div>
+            </span>
+            <span className={'badge ' + tipoBadge('PRODUCAO_PROPRIA')}>
+              {tipoLabel('PRODUCAO_PROPRIA')}
+            </span>
           </div>
           <button type="button" className="btn btn-secondary" onClick={onClose}>
             Fechar
@@ -950,156 +1063,17 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
           </div>
         ) : (
           <>
-            {/* Seção 1 — Dados da receita */}
-            <div className="section-title" style={{ marginTop: 0 }}>Dados da Receita</div>
-            <div className="card">
-              <form onSubmit={handleSaveDados}>
-                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-                  <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 110 }}>
-                    <label className="form-label">Rendimento</label>
-                    <input
-                      className="form-input"
-                      type="number"
-                      min="0"
-                      step="0.001"
-                      value={dadosForm.rendimento}
-                      onChange={(e) => setDadosForm({ ...dadosForm, rendimento: e.target.value })}
-                      placeholder="Ex.: 2"
-                    />
-                  </div>
-                  <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 110 }}>
-                    <label className="form-label">Unidade do rendimento</label>
-                    <input
-                      className="form-input"
-                      type="text"
-                      value={dadosForm.unidadeRendimento}
-                      onChange={(e) => setDadosForm({ ...dadosForm, unidadeRendimento: e.target.value })}
-                      placeholder="kg, l, porções..."
-                    />
-                  </div>
-                  <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 110 }}>
-                    <label className="form-label">Peso da porção (opcional)</label>
-                    <input
-                      className="form-input"
-                      type="number"
-                      min="0"
-                      step="0.001"
-                      value={dadosForm.pesoPorcao}
-                      onChange={(e) => setDadosForm({ ...dadosForm, pesoPorcao: e.target.value })}
-                      placeholder="Ex.: 0,030"
-                    />
-                  </div>
-                  <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 110 }}>
-                    <label className="form-label">Unidade da porção</label>
-                    <input
-                      className="form-input"
-                      type="text"
-                      value={dadosForm.unidadePorcao}
-                      onChange={(e) => setDadosForm({ ...dadosForm, unidadePorcao: e.target.value })}
-                      placeholder="kg, g..."
-                    />
-                  </div>
-                  <div className="form-group" style={{ marginBottom: 0, flex: 1.5, minWidth: 150 }}>
-                    <label className="form-label">Observações (opcional)</label>
-                    <input
-                      className="form-input"
-                      type="text"
-                      value={dadosForm.observacoes}
-                      onChange={(e) => setDadosForm({ ...dadosForm, observacoes: e.target.value })}
-                      placeholder="Modo de preparo, validade..."
-                    />
-                  </div>
-                  <button type="submit" className="btn btn-primary" disabled={dadosSaving}>
-                    {dadosSaving ? 'Salvando…' : 'Salvar dados da receita'}
-                  </button>
-                </div>
-                {dadosError && (
-                  <div className="alert alert-red" style={{ marginTop: 12, marginBottom: 0 }}>
-                    <div className="alert-msg clr-red">{dadosError}</div>
-                  </div>
-                )}
-              </form>
-            </div>
+            {/* Seção 1 — Ingredientes da receita (montagem primeiro, rendimento depois) */}
+            <div className="section-title" style={{ marginTop: 0 }}>Ingredientes da Receita</div>
 
-            {receita === null ? (
-              <div className="alert alert-gray" style={{ marginTop: 12 }}>
-                <div className="alert-msg">
-                  Este insumo ainda não possui receita. Salve os dados da receita acima
-                  (pelo menos rendimento e unidade) para liberar o cadastro de ingredientes.
-                </div>
-              </div>
-            ) : (
-              <>
-                {/* Seção 2 — Resumo do custo */}
-                <div className="section-title">Resumo do Custo</div>
-                <div className="grid-4">
-                  <Card
-                    title="Custo Total da Receita"
-                    value={brl(receita.custoTotalReceita)}
-                    hint="Soma dos ingredientes"
-                    variant="brand"
-                  />
-                  <Card
-                    title="Rendimento"
-                    value={`${num(receita.rendimento)} ${receita.unidadeRendimento}`}
-                    hint={
-                      receita.pesoPorcao
-                        ? `Porção: ${num(receita.pesoPorcao)} ${receita.unidadePorcao ?? ''}`
-                        : 'Sem porção definida'
-                    }
-                  />
-                  <Card
-                    title="Custo Unitário Calculado"
-                    value={brl(receita.custoPorRendimento)}
-                    hint={
-                      receita.custoPorPorcao !== null
-                        ? `Por ${receita.unidadeRendimento} · porção: ${brl(receita.custoPorPorcao)}`
-                        : `Por ${receita.unidadeRendimento}`
-                    }
-                    variant="success"
-                  />
-                  <Card
-                    title="Custo Atual do Insumo"
-                    value={brl(insumo?.custoUnitario)}
-                    hint={`Por ${insumo?.unidade ?? '—'} (em uso nas fichas)`}
-                    variant="info"
-                  />
-                </div>
-                <div
-                  className="card"
-                  style={{
-                    marginTop: 12,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: 12,
-                    flexWrap: 'wrap'
-                  }}
-                >
-                  <span style={{ fontSize: 12.5, color: '#888', flex: 1, minWidth: 240 }}>
-                    Atualizar custo do insumo substitui o custo unitário deste item pelo custo
-                    calculado da receita.
-                  </span>
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    onClick={handleAtualizarCusto}
-                    disabled={custoSaving || itens.length === 0}
-                  >
-                    {custoSaving ? 'Atualizando…' : 'Atualizar custo do insumo'}
-                  </button>
-                </div>
-
-                {/* Seção — Ingredientes da receita (com adição integrada) */}
-                <div className="section-title">Ingredientes da Receita</div>
-
-                <div className="table-card">
+                <div className="table-card table-card-form">
                   {itens.length === 0 ? (
                     <div className="empty-state" style={{ padding: '28px 16px' }}>
                       Nenhum ingrediente na receita. Adicione o primeiro ingrediente abaixo para
                       calcular o custo da produção própria.
                     </div>
                   ) : (
+                    <div className="table-scroll">
                     <table className="hb-table">
                       <thead>
                         <tr>
@@ -1183,6 +1157,7 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
                         })}
                       </tbody>
                     </table>
+                    </div>
                   )}
 
                   {/* Adição integrada à receita (continuação do card) */}
@@ -1198,18 +1173,12 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
                       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
                         <div className="form-group" style={{ marginBottom: 0, flex: 2, minWidth: 200 }}>
                           <label className="form-label">Insumo</label>
-                          <select
-                            className="form-input"
+                          <InsumoAutocomplete
+                            insumos={opcoesIngrediente}
                             value={ingId}
-                            onChange={(e) => setIngId(e.target.value)}
-                          >
-                            <option value="">— selecione —</option>
-                            {opcoesIngrediente.map((i) => (
-                              <option key={i.id} value={i.id}>
-                                {i.nome} ({brl(i.custoUnitario)} / {i.unidade})
-                              </option>
-                            ))}
-                          </select>
+                            onChange={(v) => setIngId(v)}
+                            placeholder="Digite para buscar o ingrediente..."
+                          />
                         </div>
                         <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 110 }}>
                           <label className="form-label">
@@ -1283,8 +1252,184 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
                     <div className="alert-msg clr-red">{editError}</div>
                   </div>
                 )}
-              </>
+
+            {/* Seção 2 — Rendimento da receita */}
+            <div className="section-title">Rendimento da Receita</div>
+            <div className="card">
+              <form onSubmit={handleSaveDados}>
+                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                  <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 110 }}>
+                    <label className="form-label">Rendimento total</label>
+                    <input
+                      className="form-input"
+                      type="number"
+                      min="0"
+                      step="0.001"
+                      value={dadosForm.rendimento}
+                      onChange={(e) => setDadosForm({ ...dadosForm, rendimento: e.target.value })}
+                      placeholder="Ex.: 2"
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 130 }}>
+                    <label className="form-label">Unidade do rendimento</label>
+                    <select
+                      className="form-input"
+                      value={dadosForm.unidadeRendimento}
+                      onChange={(e) => handleChangeUnidadeRendimento(e.target.value)}
+                    >
+                      {dadosForm.unidadeRendimento !== '' &&
+                        !UNIDADES_RENDIMENTO.includes(dadosForm.unidadeRendimento) && (
+                          <option value={dadosForm.unidadeRendimento}>
+                            {dadosForm.unidadeRendimento}
+                          </option>
+                        )}
+                      <option value="">— selecione —</option>
+                      {UNIDADES_RENDIMENTO.map((u) => (
+                        <option key={u} value={u}>{u}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 140 }}>
+                    <label className="form-label">Tamanho da porção (opcional)</label>
+                    <input
+                      className="form-input"
+                      type="number"
+                      min="0"
+                      step="0.001"
+                      value={dadosForm.pesoPorcao}
+                      onChange={(e) => setDadosForm({ ...dadosForm, pesoPorcao: e.target.value })}
+                      placeholder="Ex.: 30"
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 110 }}>
+                    <label className="form-label">Unidade da porção</label>
+                    <select
+                      className="form-input"
+                      value={dadosForm.unidadePorcao}
+                      onChange={(e) => setDadosForm({ ...dadosForm, unidadePorcao: e.target.value })}
+                    >
+                      {dadosForm.unidadePorcao !== '' &&
+                        !UNIDADES_PORCAO.includes(dadosForm.unidadePorcao) && (
+                          <option value={dadosForm.unidadePorcao}>{dadosForm.unidadePorcao}</option>
+                        )}
+                      <option value="">—</option>
+                      {UNIDADES_PORCAO.map((u) => (
+                        <option key={u} value={u}>{u}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0, flex: 1.5, minWidth: 150 }}>
+                    <label className="form-label">Observações (opcional)</label>
+                    <input
+                      className="form-input"
+                      type="text"
+                      value={dadosForm.observacoes}
+                      onChange={(e) => setDadosForm({ ...dadosForm, observacoes: e.target.value })}
+                      placeholder="Modo de preparo, validade, observações..."
+                    />
+                  </div>
+                  <button type="submit" className="btn btn-primary" disabled={dadosSaving}>
+                    {dadosSaving ? 'Salvando…' : 'Salvar dados da receita'}
+                  </button>
+                </div>
+                <div style={{ fontSize: 11.5, color: '#999', marginTop: 8 }}>
+                  Escolha como o rendimento final da receita será medido. Ex.: essa receita rendeu
+                  2 Kg e cada porção usada tem 30 g.
+                </div>
+                {dadosError && (
+                  <div className="alert alert-red" style={{ marginTop: 12, marginBottom: 0 }}>
+                    <div className="alert-msg clr-red">{dadosError}</div>
+                  </div>
+                )}
+              </form>
+            </div>
+
+            {/* Seção 3 — Resumo do custo */}
+            <div className="section-title">Resumo do Custo</div>
+            <div className="grid-4">
+              <Card
+                title="Custo Total da Receita"
+                value={brl(receita?.custoTotalReceita ?? 0)}
+                hint="Soma dos ingredientes"
+                variant="brand"
+              />
+              <Card
+                title="Rendimento"
+                value={temRendimento ? `${num(receita.rendimento)} ${unidadeRendimentoExibida}` : '—'}
+                hint={
+                  !temRendimento
+                    ? 'Não informado'
+                    : rendimentoIncompativel
+                    ? `Incompatível com insumo em ${unidadeInsumoProduzido}`
+                    : rendimentoConvertido
+                    ? `= ${num(rendimentoBase)} ${unidadeInsumoProduzido}`
+                    : receita?.pesoPorcao
+                    ? `Porção: ${num(receita.pesoPorcao)} ${receita.unidadePorcao ?? ''}`
+                    : 'Sem porção definida'
+                }
+              />
+              <Card
+                title="Custo Unitário Calculado"
+                value={custoUnitarioCalculado !== null ? brl(custoUnitarioCalculado) : '—'}
+                hint={
+                  rendimentoIncompativel
+                    ? 'Unidade do rendimento incompatível com o insumo'
+                    : custoUnitarioCalculado === null
+                    ? 'Informe o rendimento para calcular'
+                    : custoPorcaoResumo !== null
+                    ? `Por ${unidadeInsumoProduzido} · porção: ${num(receita.pesoPorcao)} ${receita.unidadePorcao ?? ''} = ${brl(custoPorcaoResumo)}`
+                    : `Por ${unidadeInsumoProduzido}`
+                }
+                variant={custoUnitarioCalculado !== null ? 'success' : 'info'}
+              />
+              <Card
+                title="Custo Atual do Insumo"
+                value={brl(insumo?.custoUnitario)}
+                hint={`Por ${insumo?.unidade ?? '—'} (em uso nas fichas)`}
+                variant="info"
+              />
+            </div>
+
+            {rendimentoIncompativel && (
+              <div className="alert alert-yellow" style={{ marginTop: 12 }}>
+                <div className="alert-msg clr-yellow">
+                  A unidade do rendimento não é compatível com a unidade cadastrada para este
+                  insumo.{' '}
+                  {unidadeInsumoProduzido === 'Kg' &&
+                    'Este insumo está cadastrado em Kg: use rendimento em g ou Kg, ou edite o insumo para L se o rendimento for em litros.'}
+                  {unidadeInsumoProduzido === 'L' &&
+                    'Este insumo está cadastrado em L: use rendimento em ml ou L.'}
+                  {unidadeInsumoProduzido === 'Und' &&
+                    'Este insumo está cadastrado em Und: use rendimento em Und ou Porções.'}
+                </div>
+              </div>
             )}
+
+            {/* Seção 4 — Atualizar custo do insumo */}
+            <div className="section-title">Atualizar Custo do Insumo</div>
+            <div
+              className="card"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 12,
+                flexWrap: 'wrap'
+              }}
+            >
+              <span style={{ fontSize: 12.5, color: '#888', flex: 1, minWidth: 240 }}>
+                Substitui o custo unitário deste insumo pelo custo calculado da receita
+                (ingredientes + rendimento).
+              </span>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={handleAtualizarCusto}
+                disabled={custoSaving || itens.length === 0 || custoUnitarioCalculado === null}
+              >
+                {custoSaving ? 'Atualizando…' : 'Atualizar custo do insumo'}
+              </button>
+            </div>
           </>
         )}
 

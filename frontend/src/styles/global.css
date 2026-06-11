@@ -248,6 +248,10 @@ a { text-decoration: none; color: inherit; }
 
 /* Tabela */
 .table-card { background: #fff; border: 0.5px solid #e8e8e8; border-radius: 12px; overflow: hidden; overflow-x: auto; }
+/* Variante para cards que contêm formulário com dropdown (autocomplete):
+   o card não corta o menu; a rolagem horizontal fica só no wrapper da tabela */
+.table-card-form { overflow: visible; }
+.table-scroll { overflow-x: auto; border-radius: 12px 12px 0 0; }
 .hb-table   { width: 100%; border-collapse: collapse; }
 .hb-table th {
   font-size: 10px; font-weight: 600; color: #bbb;
@@ -382,6 +386,40 @@ a { text-decoration: none; color: inherit; }
 .confirm-message { font-size: 13px; color: #444; line-height: 1.5; }
 .confirm-description { font-size: 12px; color: #999; margin-top: 6px; line-height: 1.5; }
 .confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+
+/* Autocomplete de insumos */
+.autocomplete { position: relative; }
+.autocomplete-input { width: 100%; }
+.autocomplete-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  background: #fff;
+  border: 1px solid #e8e8e8;
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.14);
+  max-height: 240px;
+  overflow-y: auto;
+  z-index: 3000;
+  padding: 4px;
+}
+.autocomplete-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 8px 10px;
+  border-radius: 7px;
+  font-size: 13px;
+  color: #333;
+  line-height: 1.4;
+}
+.autocomplete-option:hover,
+.autocomplete-option-active { background: #fff7ed; color: #111; }
+.autocomplete-empty { padding: 10px 12px; font-size: 12.5px; color: #999; }
 
 /* Abas de modal */
 .modal-tabs {

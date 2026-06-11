@@ -3,6 +3,7 @@ import api from '../services/api'
 import Card from '../components/Card'
 import Toast from '../components/Toast'
 import ConfirmDialog from '../components/ConfirmDialog'
+import InsumoAutocomplete from '../components/InsumoAutocomplete'
 
 const brlFormatter = new Intl.NumberFormat('pt-BR', {
   style: 'currency',
@@ -1044,7 +1045,7 @@ function FichaModal({ produtoId, onClose, onChanged }) {
     e.preventDefault()
     setItemError(null)
     if (!formInsumoId) {
-      setItemError('Selecione um insumo.')
+      setItemError('Selecione um insumo válido.')
       return
     }
     const q = Number(formQty)
@@ -1396,13 +1397,14 @@ function FichaModal({ produtoId, onClose, onChanged }) {
             {/* Seção 4 — Ficha técnica */}
             <div className="section-title">Ficha Técnica</div>
 
-            <div className="table-card">
+            <div className="table-card table-card-form">
               {itens.length === 0 ? (
                 <div className="empty-state" style={{ padding: '28px 16px' }}>
                   Ficha técnica vazia. Adicione o primeiro insumo no formulário abaixo — assim que
                   houver pelo menos um item, o CMV e a margem serão recalculados.
                 </div>
               ) : (
+                <div className="table-scroll">
                   <table className="hb-table hb-table-compact">
                     <thead>
                       <tr>
@@ -1558,6 +1560,7 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                       })}
                     </tbody>
                   </table>
+                </div>
               )}
 
               {/* Adição integrada à ficha (continuação do card) */}
@@ -1573,18 +1576,12 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                 <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
                   <div className="form-group" style={{ marginBottom: 0, flex: 2, minWidth: 200 }}>
                     <label className="form-label">Insumo</label>
-                    <select
-                      className="form-input"
+                    <InsumoAutocomplete
+                      insumos={insumos}
                       value={formInsumoId}
-                      onChange={(e) => handleSelectInsumo(e.target.value)}
-                    >
-                      <option value="">— selecione —</option>
-                      {insumos.map((i) => (
-                        <option key={i.id} value={i.id}>
-                          {i.nome} ({brl(i.custoUnitario)} / {i.unidade})
-                        </option>
-                      ))}
-                    </select>
+                      onChange={handleSelectInsumo}
+                      placeholder="Digite para buscar o insumo..."
+                    />
                   </div>
                   <div className="form-group" style={{ marginBottom: 0, flex: 0.8, minWidth: 100 }}>
                     <label className="form-label">
