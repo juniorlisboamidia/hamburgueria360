@@ -894,16 +894,6 @@ app.post('/api/produtos/:produtoId/ficha-tecnica/itens', async (req, res) => {
       return res.status(400).json({ error: rateioError });
     }
 
-    const existente = await prisma.fichaTecnicaItem.findUnique({
-      where: { produtoId_insumoId: { produtoId, insumoId: Number(insumoId) } }
-    });
-    if (existente) {
-      return res.status(409).json({
-        error: 'Insumo já está na ficha técnica deste produto',
-        itemId: existente.id
-      });
-    }
-
     const item = await prisma.fichaTecnicaItem.create({
       data: {
         produtoId,

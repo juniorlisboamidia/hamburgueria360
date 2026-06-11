@@ -1077,14 +1077,7 @@ function FichaModal({ produtoId, onClose, onChanged }) {
         return reload()
       })
       .catch((err) => {
-        const status = err?.response?.status
-        if (status === 409) {
-          setItemError(
-            'Esse insumo já está na ficha. Edite a quantidade do item existente em vez de adicionar de novo.'
-          )
-        } else {
-          setItemError(err?.response?.data?.error ?? err?.message ?? 'Erro ao adicionar item.')
-        }
+        setItemError(err?.response?.data?.error ?? err?.message ?? 'Erro ao adicionar item.')
       })
       .finally(() => setItemSubmitting(false))
   }

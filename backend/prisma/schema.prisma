@@ -129,7 +129,8 @@ model FichaTecnicaItem {
   produto Produto @relation(fields: [produtoId], references: [id], onDelete: Cascade)
   insumo  Insumo  @relation(fields: [insumoId], references: [id], onDelete: Restrict)
 
-  @@unique([produtoId, insumoId])
+  // Sem unique(produtoId, insumoId): o mesmo insumo pode aparecer em várias
+  // linhas da ficha (ex.: 2x "Pão de hambúrguer — 1 und" para leitura visual)
   @@index([produtoId])
   @@index([insumoId])
 }

@@ -229,15 +229,7 @@ function FichaProdutoEditor({ produtoId }) {
         return reload()
       })
       .catch((err) => {
-        const status = err?.response?.status
-        const data = err?.response?.data
-        if (status === 409) {
-          setFormError(
-            'Esse insumo já está na ficha. Edite a quantidade do item existente em vez de adicionar de novo.'
-          )
-        } else {
-          setFormError(data?.error ?? err?.message ?? 'Erro ao adicionar item.')
-        }
+        setFormError(err?.response?.data?.error ?? err?.message ?? 'Erro ao adicionar item.')
       })
       .finally(() => setFormSubmitting(false))
   }
