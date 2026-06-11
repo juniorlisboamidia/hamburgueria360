@@ -42,6 +42,22 @@ function sufixoQuantidade(unidadeInsumo) {
 // base do insumo produzido (3800 g → 3,8 Kg) antes de calcular o custo unitário.
 const UNIDADES_RENDIMENTO = ['g', 'Kg', 'ml', 'L', 'Und', 'Porções']
 const UNIDADES_PORCAO = ['g', 'ml', 'und', 'porção']
+// Unidades de rendimento compatíveis com a unidade do insumo produzido:
+// Kg rende em g, L rende em ml, Und rende em Und/Porções. Limitar o select
+// evita combinação incoerente (ex.: insumo em Kg com rendimento em L).
+const RENDIMENTO_POR_UNIDADE_INSUMO = {
+  Kg: ['g'],
+  L: ['ml'],
+  Und: ['Und', 'Porções']
+}
+function opcoesUnidadeRendimento(unidadeInsumo) {
+  return RENDIMENTO_POR_UNIDADE_INSUMO[unidadeInsumo] ?? UNIDADES_RENDIMENTO
+}
+const AJUDA_RENDIMENTO = {
+  Kg: 'Informe o rendimento total da receita em gramas. O sistema converterá para Kg para calcular o custo por Kg.',
+  L: 'Informe o rendimento total da receita em ml. O sistema converterá para L para calcular o custo por litro.',
+  Und: 'Informe quantas unidades ou porções essa receita rende.'
+}
 const SUGESTAO_UNIDADE_PORCAO = {
   g: 'g', Kg: 'g', ml: 'ml', L: 'ml', Und: 'und', 'Porções': 'porção'
 }
@@ -770,12 +786,24 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
     setReceita(data.receita)
     if (data.receita) {
       const rendimentoNum = Number(data.receita.rendimento)
+      // Unidade do rendimento limitada pela unidade do insumo produzido:
+      // valor salvo incompatível é trocado automaticamente pela unidade compatível
+      // (ex.: insumo Kg com rendimento em L → g); vazio em lista de opção única
+      // já abre pré-selecionado.
+      const opcoes = opcoesUnidadeRendimento(unidadeNormalizada(data.insumo?.unidade))
+      const unidadeSalva =
+        unidadeRendimentoCanonica(data.receita.unidadeRendimento) ??
+        (data.receita.unidadeRendimento ?? '')
+      const unidadeAjustada =
+        unidadeSalva !== '' && !opcoes.includes(unidadeSalva)
+          ? opcoes[0]
+          : unidadeSalva === '' && opcoes.length === 1
+          ? opcoes[0]
+          : unidadeSalva
       setDadosForm({
         // rendimento 0 = ainda não informado (receita criada antes do rendimento)
         rendimento: rendimentoNum > 0 ? String(rendimentoNum) : '',
-        unidadeRendimento:
-          unidadeRendimentoCanonica(data.receita.unidadeRendimento) ??
-          (data.receita.unidadeRendimento ?? ''),
+        unidadeRendimento: unidadeAjustada,
         pesoPorcao:
           data.receita.pesoPorcao === null || data.receita.pesoPorcao === undefined
             ? ''
@@ -1278,13 +1306,15 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
                       onChange={(e) => handleChangeUnidadeRendimento(e.target.value)}
                     >
                       {dadosForm.unidadeRendimento !== '' &&
-                        !UNIDADES_RENDIMENTO.includes(dadosForm.unidadeRendimento) && (
+                        !opcoesUnidadeRendimento(unidadeInsumoProduzido).includes(
+                          dadosForm.unidadeRendimento
+                        ) && (
                           <option value={dadosForm.unidadeRendimento}>
                             {dadosForm.unidadeRendimento}
                           </option>
                         )}
                       <option value="">— selecione —</option>
-                      {UNIDADES_RENDIMENTO.map((u) => (
+                      {opcoesUnidadeRendimento(unidadeInsumoProduzido).map((u) => (
                         <option key={u} value={u}>{u}</option>
                       ))}
                     </select>
@@ -1333,8 +1363,8 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
                   </button>
                 </div>
                 <div style={{ fontSize: 11.5, color: '#999', marginTop: 8 }}>
-                  Escolha como o rendimento final da receita será medido. Ex.: essa receita rendeu
-                  2 Kg e cada porção usada tem 30 g.
+                  {AJUDA_RENDIMENTO[unidadeInsumoProduzido] ??
+                    'Escolha como o rendimento final da receita será medido. Ex.: essa receita rendeu 2 Kg e cada porção usada tem 30 g.'}
                 </div>
                 {dadosError && (
                   <div className="alert alert-red" style={{ marginTop: 12, marginBottom: 0 }}>
