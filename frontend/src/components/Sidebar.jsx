@@ -11,7 +11,8 @@ const precificacao = [
 
 const gestao = [
   { to: '/custos', label: 'Custos' },
-  { to: '/faturamento',  label: 'Faturamento' }
+  { to: '/faturamento',  label: 'Faturamento' },
+  { to: '/calc-frete', label: 'Calc. Frete' }
 ]
 
 function itemClass({ isActive }) {
