@@ -103,9 +103,32 @@ model Produto {
   atualizadoEm DateTime @updatedAt
 
   fichaTecnica FichaTecnicaItem[]
+  comboItens   ComboItem[]        @relation("ItensDoCombo")
+  emCombos     ComboItem[]        @relation("ProdutoEmCombos")
 
   @@index([nome])
   @@index([ativo])
+}
+
+// ============================================================
+// Itens de combo: combo (Produto tipo COMBO) composto por
+// produtos/bebidas prontos — nunca por insumos nem por outro combo
+// ============================================================
+model ComboItem {
+  id           Int      @id @default(autoincrement())
+  comboId      Int
+  produtoId    Int
+  quantidade   Decimal  @db.Decimal(10, 2)
+  criadoEm     DateTime @default(now())
+  atualizadoEm DateTime @updatedAt
+
+  combo   Produto @relation("ItensDoCombo", fields: [comboId], references: [id], onDelete: Cascade)
+  produto Produto @relation("ProdutoEmCombos", fields: [produtoId], references: [id], onDelete: Restrict)
+
+  // Mesmo produto adicionado de novo soma quantidade (consolidado por item)
+  @@unique([comboId, produtoId])
+  @@index([comboId])
+  @@index([produtoId])
 }
 
 // ============================================================

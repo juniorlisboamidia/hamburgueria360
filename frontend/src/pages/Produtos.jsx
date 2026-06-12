@@ -654,8 +654,15 @@ export default function Produtos() {
               })
             } else if (tipoP === 'COMBO') {
               diagnosticos.push({
-                texto: 'Monte o combo com produtos e bebidas na próxima etapa.',
-                cls: 'clr-muted'
+                texto: a.mensagemDiagnostico ?? 'Monte o combo com produtos e bebidas.',
+                cls:
+                  statusGeralProduto === 'CRITICO'
+                    ? 'clr-red'
+                    : statusGeralProduto === 'ATENCAO'
+                    ? 'clr-yellow'
+                    : statusGeralProduto === 'SAUDAVEL'
+                    ? 'clr-green'
+                    : 'clr-muted'
               })
             } else if (semFichaProduto) {
               diagnosticos.push({ texto: 'Ficha técnica pendente', cls: 'clr-muted' })
@@ -758,9 +765,42 @@ export default function Produtos() {
                       </MetricRow>
                     </>
                   ) : tipoP === 'COMBO' ? (
-                    <MetricRow label="Composição">
-                      <span className="clr-muted">Pendente</span>
-                    </MetricRow>
+                    (a.quantidadeItensCombo ?? 0) > 0 ? (
+                      <>
+                        <MetricRow label="Valor separado">{brl(a.valorItensSeparados)}</MetricRow>
+                        <MetricRow label="Desconto">
+                          {a.descontoCombo === null || a.descontoCombo === undefined
+                            ? <span className="clr-muted">—</span>
+                            : (
+                              <span className={Number(a.descontoCombo) < 0 ? 'clr-red' : ''}>
+                                {brl(a.descontoCombo)}
+                                {a.percentualDescontoCombo !== null && a.percentualDescontoCombo !== undefined
+                                  ? ` (${pct(a.percentualDescontoCombo)})`
+                                  : ''}
+                              </span>
+                            )}
+                        </MetricRow>
+                        <MetricRow label="Custo total">{brl(a.custoTotalCombo)}</MetricRow>
+                        <MetricRow label="CMV do combo">
+                          {a.cmvComboPercentual === null || a.cmvComboPercentual === undefined
+                            ? <span className="clr-muted">—</span>
+                            : <span style={{ fontWeight: 600 }}>{pct(a.cmvComboPercentual)}</span>}
+                        </MetricRow>
+                        <MetricRow label="Lucro bruto">
+                          {a.lucroBrutoCombo === null || a.lucroBrutoCombo === undefined
+                            ? <span className="clr-muted">—</span>
+                            : (
+                              <span className={Number(a.lucroBrutoCombo) > 0 ? 'clr-green' : 'clr-red'}>
+                                {brl(a.lucroBrutoCombo)}
+                              </span>
+                            )}
+                        </MetricRow>
+                      </>
+                    ) : (
+                      <MetricRow label="Composição">
+                        <span className="clr-muted">Pendente</span>
+                      </MetricRow>
+                    )
                   ) : (
                     <>
                       <MetricRow label="CMV do produto">
@@ -1129,6 +1169,15 @@ function FichaModal({ produtoId, onClose, onChanged }) {
   const [itemParaRemover, setItemParaRemover] = useState(null)
   const [removendoItem, setRemovendoItem] = useState(false)
 
+  // ===== Combo: composição por produtos/bebidas prontos =====
+  const [produtosLista, setProdutosLista] = useState([])
+  const [comboSelId, setComboSelId] = useState('')
+  const [comboQty, setComboQty] = useState('1')
+  const [comboError, setComboError] = useState(null)
+  const [comboSubmitting, setComboSubmitting] = useState(false)
+  const [editComboItemId, setEditComboItemId] = useState(null)
+  const [editComboQty, setEditComboQty] = useState('')
+
   function applyFicha(fichaData) {
     setProduto(fichaData.produto)
     setItens(fichaData.itens)
@@ -1147,13 +1196,15 @@ function FichaModal({ produtoId, onClose, onChanged }) {
     Promise.all([
       api.get(`/produtos/${produtoId}/ficha-tecnica`),
       api.get(`/produtos/${produtoId}/analise`),
-      api.get('/insumos')
+      api.get('/insumos'),
+      api.get('/produtos')
     ])
-      .then(([fichaRes, analiseRes, insumosRes]) => {
+      .then(([fichaRes, analiseRes, insumosRes, produtosRes]) => {
         const prod = fichaRes.data.produto
         applyFicha(fichaRes.data)
         setAnalise(analiseRes.data)
         setInsumos(insumosRes.data)
+        setProdutosLista(produtosRes.data)
         setDadosForm({
           nome: prod.nome ?? '',
           descricao: prod.descricao ?? '',
@@ -1374,6 +1425,65 @@ function FichaModal({ produtoId, onClose, onChanged }) {
       })
   }
 
+  function handleAddComboItem(e) {
+    e.preventDefault()
+    setComboError(null)
+    if (!comboSelId) {
+      setComboError('Selecione um produto ou bebida.')
+      return
+    }
+    const q = Number(comboQty)
+    if (!Number.isFinite(q) || q <= 0) {
+      setComboError('Quantidade deve ser maior que zero.')
+      return
+    }
+    setComboSubmitting(true)
+    api
+      .post(`/produtos/${produtoId}/combo-itens`, { produtoId: Number(comboSelId), quantidade: q })
+      .then(() => {
+        setComboSelId('')
+        setComboQty('1')
+        setToast({ message: 'Item adicionado ao combo.', type: 'success' })
+        return reload()
+      })
+      .catch((err) =>
+        setComboError(err?.response?.data?.error ?? err?.message ?? 'Erro ao adicionar item.')
+      )
+      .finally(() => setComboSubmitting(false))
+  }
+
+  function handleSaveComboItem(itemId) {
+    const q = Number(editComboQty)
+    if (!Number.isFinite(q) || q <= 0) {
+      setComboError('Quantidade deve ser maior que zero.')
+      return
+    }
+    setComboError(null)
+    api
+      .put(`/produtos/${produtoId}/combo-itens/${itemId}`, { quantidade: q })
+      .then(() => {
+        setEditComboItemId(null)
+        setEditComboQty('')
+        return reload()
+      })
+      .catch((err) =>
+        setComboError(err?.response?.data?.error ?? err?.message ?? 'Erro ao atualizar item.')
+      )
+  }
+
+  function handleRemoveComboItem(itemId) {
+    setComboError(null)
+    api
+      .delete(`/produtos/${produtoId}/combo-itens/${itemId}`)
+      .then(() => {
+        setToast({ message: 'Item removido do combo.', type: 'success' })
+        return reload()
+      })
+      .catch((err) =>
+        setComboError(err?.response?.data?.error ?? err?.message ?? 'Erro ao remover item.')
+      )
+  }
+
   const status = analise?.statusCmv
   // Badge do cabeçalho do modal segue a saúde geral; o card "CMV do Produto"
   // continua colorido pelo statusCmv
@@ -1381,6 +1491,11 @@ function FichaModal({ produtoId, onClose, onChanged }) {
   const semFicha = status === 'SEM_FICHA'
   // BEBIDA e COMBO usam corpo simplificado (sem ficha técnica/precificação por CMV)
   const tipoModalProduto = produto?.tipoProduto ?? 'PRODUTO'
+  // Elegíveis para compor combo: produtos e bebidas ativos (nunca outro combo)
+  const elegiveisCombo = produtosLista.filter(
+    (p) => (p.tipoProduto ?? 'PRODUTO') !== 'COMBO' && p.id !== produtoId
+  )
+  const comboItensResumo = analise?.comboItensResumo ?? []
 
   const insumoSelecionado = insumos.find((x) => String(x.id) === formInsumoId)
   const insumoSelUnidade = insumoSelecionado
@@ -1550,12 +1665,223 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                 )}
               </>
             ) : (
-              <div className="alert alert-gray" style={{ marginTop: 12 }}>
-                <div className="alert-msg">
-                  A composição do combo será configurada em uma próxima etapa. Monte o combo com
-                  produtos e bebidas já cadastrados quando essa fase estiver disponível.
+              <>
+                {/* ===== Itens do combo: produtos/bebidas prontos ===== */}
+                <div className="section-title">Itens do Combo</div>
+                <div className="card">
+                  <form onSubmit={handleAddComboItem}>
+                    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                      <div className="form-group" style={{ marginBottom: 0, flex: 2, minWidth: 220 }}>
+                        <label className="form-label">Produto ou bebida</label>
+                        <InsumoAutocomplete
+                          insumos={elegiveisCombo}
+                          value={comboSelId}
+                          onChange={setComboSelId}
+                          placeholder="Digite para buscar produto ou bebida..."
+                          getOptionLabel={(p) =>
+                            `${p.nome} — ${brl(p.precoVenda)} · ${
+                              (p.tipoProduto ?? 'PRODUTO') === 'BEBIDA' ? 'Bebida' : 'Produto'
+                            }`
+                          }
+                        />
+                      </div>
+                      <div className="form-group" style={{ marginBottom: 0, flex: 0.6, minWidth: 90 }}>
+                        <label className="form-label">Quantidade</label>
+                        <input
+                          className="form-input"
+                          type="number"
+                          min="0"
+                          step="0.5"
+                          value={comboQty}
+                          onChange={(e) => setComboQty(e.target.value)}
+                        />
+                      </div>
+                      <button type="submit" className="btn btn-primary" disabled={comboSubmitting}>
+                        {comboSubmitting ? 'Adicionando…' : 'Adicionar item'}
+                      </button>
+                    </div>
+                    {comboError && (
+                      <div className="alert alert-red" style={{ marginTop: 12, marginBottom: 0 }}>
+                        <div className="alert-msg clr-red">{comboError}</div>
+                      </div>
+                    )}
+                  </form>
+
+                  {comboItensResumo.length === 0 ? (
+                    <div className="empty-state" style={{ padding: '24px 16px' }}>
+                      Monte o combo com produtos e bebidas. Adicione o primeiro item acima.
+                    </div>
+                  ) : (
+                    <div className="table-card" style={{ marginTop: 14 }}>
+                      <table className="hb-table hb-table-compact">
+                        <thead>
+                          <tr>
+                            <th>Item</th>
+                            <th>Tipo</th>
+                            <th>Qtd</th>
+                            <th>Preço unit.</th>
+                            <th>Custo unit.</th>
+                            <th>Total venda</th>
+                            <th>Total custo</th>
+                            <th style={{ textAlign: 'right' }}>Ações</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {comboItensResumo.map((item) => (
+                            <tr key={item.id}>
+                              <td style={{ fontWeight: 500, color: '#111' }}>{item.nome}</td>
+                              <td>
+                                <span className={'badge ' + (item.tipoProduto === 'BEBIDA' ? 'badge-blue' : 'badge-gray')}>
+                                  {item.tipoProduto === 'BEBIDA' ? 'Bebida' : 'Produto'}
+                                </span>
+                              </td>
+                              <td>
+                                {editComboItemId === item.id ? (
+                                  <input
+                                    className="form-input"
+                                    style={{ padding: '5px 8px', fontSize: 13, width: 70 }}
+                                    type="number"
+                                    min="0"
+                                    step="0.5"
+                                    value={editComboQty}
+                                    onChange={(e) => setEditComboQty(e.target.value)}
+                                  />
+                                ) : (
+                                  <strong>{num(item.quantidade)}x</strong>
+                                )}
+                              </td>
+                              <td>{brl(item.precoVendaUnitario)}</td>
+                              <td>{brl(item.custoRealUnitario)}</td>
+                              <td>{brl(item.totalVenda)}</td>
+                              <td>{brl(item.totalCusto)}</td>
+                              <td style={{ textAlign: 'right' }}>
+                                <div style={{ display: 'inline-flex', gap: 6 }}>
+                                  {editComboItemId === item.id ? (
+                                    <>
+                                      <button type="button" className="btn btn-primary" onClick={() => handleSaveComboItem(item.id)}>
+                                        Salvar
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="btn btn-secondary"
+                                        onClick={() => { setEditComboItemId(null); setEditComboQty('') }}
+                                      >
+                                        Cancelar
+                                      </button>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <button
+                                        type="button"
+                                        className="btn btn-secondary"
+                                        onClick={() => { setEditComboItemId(item.id); setEditComboQty(String(item.quantidade)) }}
+                                      >
+                                        Editar
+                                      </button>
+                                      <button type="button" className="btn btn-danger" onClick={() => handleRemoveComboItem(item.id)}>
+                                        Remover
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
-              </div>
+
+                {/* ===== Resumo do combo ===== */}
+                <div className="section-title">Resumo do Combo</div>
+                <div className="grid-3">
+                  <Card
+                    title="Valor dos Itens Separados"
+                    value={comboItensResumo.length === 0 ? '—' : brl(analise?.valorItensSeparados)}
+                    hint="Soma dos preços individuais"
+                  />
+                  <Card
+                    title="Preço do Combo"
+                    value={brl(analise?.precoVenda)}
+                    hint="Cadastrado no combo"
+                    variant="brand"
+                  />
+                  <Card
+                    title="Desconto do Combo"
+                    value={
+                      analise?.descontoCombo === null || analise?.descontoCombo === undefined
+                        ? '—'
+                        : brl(analise.descontoCombo)
+                    }
+                    hint={
+                      analise?.percentualDescontoCombo === null ||
+                      analise?.percentualDescontoCombo === undefined
+                        ? 'Itens separados − preço do combo'
+                        : `${pct(analise.percentualDescontoCombo)} do valor separado`
+                    }
+                  />
+                </div>
+                <div className="grid-3">
+                  <Card
+                    title="Custo Total do Combo"
+                    value={comboItensResumo.length === 0 ? '—' : brl(analise?.custoTotalCombo)}
+                    hint="Soma do custo real dos itens"
+                  />
+                  <Card
+                    title="CMV do Combo"
+                    value={
+                      analise?.cmvComboPercentual === null || analise?.cmvComboPercentual === undefined
+                        ? '—'
+                        : pct(analise.cmvComboPercentual)
+                    }
+                    hint="Custo total / preço do combo"
+                  />
+                  <Card
+                    title="Lucro Bruto do Combo"
+                    value={
+                      analise?.lucroBrutoCombo === null || analise?.lucroBrutoCombo === undefined
+                        ? '—'
+                        : brl(analise.lucroBrutoCombo)
+                    }
+                    hint={
+                      analise?.margemComboPercentual === null ||
+                      analise?.margemComboPercentual === undefined
+                        ? 'Preço − custo total'
+                        : `Margem: ${pct(analise.margemComboPercentual)}`
+                    }
+                    variant={
+                      analise?.lucroBrutoCombo !== null && Number(analise?.lucroBrutoCombo) > 0
+                        ? 'success'
+                        : 'info'
+                    }
+                  />
+                </div>
+                {analise?.mensagemDiagnostico && (
+                  <div
+                    className={
+                      'alert ' +
+                      (statusGeralModal === 'CRITICO'
+                        ? 'alert-red'
+                        : statusGeralModal === 'ATENCAO'
+                        ? 'alert-yellow'
+                        : statusGeralModal === 'SAUDAVEL'
+                        ? 'alert-green'
+                        : 'alert-gray')
+                    }
+                    style={{ marginTop: 12 }}
+                  >
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <div className="alert-msg">{analise.mensagemDiagnostico}</div>
+                      {(analise?.alertasCombo ?? [])
+                        .filter((al) => al !== analise.mensagemDiagnostico)
+                        .map((al) => (
+                          <div key={al} className="alert-msg">• {al}</div>
+                        ))}
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </>
         ) : (

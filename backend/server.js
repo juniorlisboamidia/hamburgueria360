@@ -816,6 +816,160 @@ app.delete('/api/produtos/:id', async (req, res) => {
   }
 });
 
+// ===== Itens de Combo =====
+// Combo é composto por produtos/bebidas prontos (nunca insumos, nunca outro combo)
+
+const COMBO_ITEM_INCLUDE = {
+  produto: { include: { fichaTecnica: { include: { insumo: { include: { receitaProducao: true } } } } } }
+};
+
+// Custo real de um item filho do combo: PRODUTO usa o custo total real da
+// ficha técnica; BEBIDA usa o custo direto de compra (0 quando não informado)
+function custoRealItemCombo(produto) {
+  if ((produto.tipoProduto ?? 'PRODUTO') === 'BEBIDA') {
+    return produto.custoDireto === null || produto.custoDireto === undefined
+      ? 0
+      : Number(produto.custoDireto);
+  }
+  return computeFichaTotals(produto.fichaTecnica ?? []).custoTotalFicha;
+}
+
+function comboItemOut(item) {
+  const round2 = (n) => Number(n.toFixed(2));
+  const qtd = Number(item.quantidade);
+  const precoUnit = Number(item.produto.precoVenda);
+  const custoUnit = custoRealItemCombo(item.produto);
+  return {
+    id: item.id,
+    comboId: item.comboId,
+    produtoId: item.produtoId,
+    nome: item.produto.nome,
+    tipoProduto: item.produto.tipoProduto ?? 'PRODUTO',
+    quantidade: qtd,
+    precoVendaUnitario: round2(precoUnit),
+    custoRealUnitario: round2(custoUnit),
+    totalVenda: round2(precoUnit * qtd),
+    totalCusto: round2(custoUnit * qtd)
+  };
+}
+
+async function findComboAtivo(id) {
+  if (!Number.isInteger(id) || id <= 0) return { error: 'id inválido', status: 400 };
+  const combo = await prisma.produto.findUnique({ where: { id } });
+  if (!combo || !combo.ativo) return { error: 'Combo não encontrado', status: 404 };
+  if ((combo.tipoProduto ?? 'PRODUTO') !== 'COMBO') {
+    return { error: 'Itens de combo só existem para produtos do tipo COMBO', status: 400 };
+  }
+  return { combo };
+}
+
+app.get('/api/produtos/:id/combo-itens', async (req, res) => {
+  try {
+    const { error, status } = await findComboAtivo(Number(req.params.id));
+    if (error) return res.status(status).json({ error });
+    const itens = await prisma.comboItem.findMany({
+      where: { comboId: Number(req.params.id) },
+      include: COMBO_ITEM_INCLUDE,
+      orderBy: { id: 'asc' }
+    });
+    res.json(itens.map(comboItemOut));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro interno ao listar itens do combo' });
+  }
+});
+
+app.post('/api/produtos/:id/combo-itens', async (req, res) => {
+  try {
+    const comboId = Number(req.params.id);
+    const { error, status } = await findComboAtivo(comboId);
+    if (error) return res.status(status).json({ error });
+
+    const { produtoId, quantidade } = req.body ?? {};
+    if (!Number.isInteger(Number(produtoId)) || Number(produtoId) <= 0) {
+      return res.status(400).json({ error: 'produtoId inválido' });
+    }
+    if (quantidade === undefined || quantidade === null || isNaN(Number(quantidade)) || Number(quantidade) <= 0) {
+      return res.status(400).json({ error: 'quantidade é obrigatória e deve ser maior que zero' });
+    }
+    if (Number(produtoId) === comboId) {
+      return res.status(400).json({ error: 'O combo não pode conter ele mesmo' });
+    }
+    const filho = await prisma.produto.findUnique({ where: { id: Number(produtoId) } });
+    if (!filho || !filho.ativo) {
+      return res.status(404).json({ error: 'Produto/bebida não encontrado ou inativo' });
+    }
+    if ((filho.tipoProduto ?? 'PRODUTO') === 'COMBO') {
+      return res.status(400).json({ error: 'Combo não pode conter outro combo. Adicione produtos e bebidas.' });
+    }
+
+    // Mesmo item adicionado de novo: soma a quantidade (consolidado por item)
+    const existente = await prisma.comboItem.findUnique({
+      where: { comboId_produtoId: { comboId, produtoId: Number(produtoId) } }
+    });
+    const item = existente
+      ? await prisma.comboItem.update({
+          where: { id: existente.id },
+          data: { quantidade: Number(existente.quantidade) + Number(quantidade) },
+          include: COMBO_ITEM_INCLUDE
+        })
+      : await prisma.comboItem.create({
+          data: { comboId, produtoId: Number(produtoId), quantidade: Number(quantidade) },
+          include: COMBO_ITEM_INCLUDE
+        });
+
+    res.status(201).json(comboItemOut(item));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro interno ao adicionar item ao combo' });
+  }
+});
+
+app.put('/api/produtos/:id/combo-itens/:itemId', async (req, res) => {
+  try {
+    const comboId = Number(req.params.id);
+    const itemId = Number(req.params.itemId);
+    const { error, status } = await findComboAtivo(comboId);
+    if (error) return res.status(status).json({ error });
+
+    const existente = await prisma.comboItem.findUnique({ where: { id: itemId } });
+    if (!existente || existente.comboId !== comboId) {
+      return res.status(404).json({ error: 'Item não encontrado neste combo' });
+    }
+    const { quantidade } = req.body ?? {};
+    if (quantidade === undefined || quantidade === null || isNaN(Number(quantidade)) || Number(quantidade) <= 0) {
+      return res.status(400).json({ error: 'quantidade deve ser maior que zero' });
+    }
+    const item = await prisma.comboItem.update({
+      where: { id: itemId },
+      data: { quantidade: Number(quantidade) },
+      include: COMBO_ITEM_INCLUDE
+    });
+    res.json(comboItemOut(item));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro interno ao atualizar item do combo' });
+  }
+});
+
+app.delete('/api/produtos/:id/combo-itens/:itemId', async (req, res) => {
+  try {
+    const comboId = Number(req.params.id);
+    const itemId = Number(req.params.itemId);
+    const { error, status } = await findComboAtivo(comboId);
+    if (error) return res.status(status).json({ error });
+    const existente = await prisma.comboItem.findUnique({ where: { id: itemId } });
+    if (!existente || existente.comboId !== comboId) {
+      return res.status(404).json({ error: 'Item não encontrado neste combo' });
+    }
+    await prisma.comboItem.delete({ where: { id: itemId } });
+    res.json({ id: itemId, deleted: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro interno ao remover item do combo' });
+  }
+});
+
 // ===== Ficha Técnica =====
 
 const TIPOS_USO_FICHA = ['INGREDIENTE', 'EMBALAGEM', 'ACOMPANHAMENTO', 'OPERACIONAL'];
@@ -1406,36 +1560,111 @@ app.get('/api/produtos/:id/analise', async (req, res) => {
       });
     }
 
-    // ===== COMBO: composição será configurada em fase futura =====
+    // ===== COMBO: análise calculada a partir dos itens (produtos/bebidas) =====
+    // Combo não usa a régua 30/35 de produto individual: o objetivo é elevar
+    // ticket e lucro bruto absoluto, então a leitura é desconto/margem/lucro.
     if (produtoOut.tipoProduto === 'COMBO') {
+      const comboItens = await prisma.comboItem.findMany({
+        where: { comboId: id },
+        include: COMBO_ITEM_INCLUDE,
+        orderBy: { id: 'asc' }
+      });
       const precificacaoCombo = computePrecificacao(
         { custoComMargem: 0, custoEmbutido: 0 },
         precoVenda,
         config
       );
+
+      const comboItensResumo = comboItens.map(comboItemOut);
+      const temItens = comboItensResumo.length > 0;
+      const valorItensSeparados = comboItensResumo.reduce((s, i) => s + i.totalVenda, 0);
+      const custoTotalCombo = comboItensResumo.reduce((s, i) => s + i.totalCusto, 0);
+
+      const descontoCombo = temItens ? valorItensSeparados - precoVenda : null;
+      const percentualDescontoCombo =
+        temItens && valorItensSeparados > 0
+          ? (descontoCombo / valorItensSeparados) * 100
+          : null;
+      const cmvComboPercentual =
+        temItens && precoVenda > 0 ? (custoTotalCombo / precoVenda) * 100 : null;
+      const lucroBrutoCombo = temItens && precoVenda > 0 ? precoVenda - custoTotalCombo : null;
+      const margemComboPercentual =
+        lucroBrutoCombo === null ? null : (lucroBrutoCombo / precoVenda) * 100;
+
+      const alertasCombo = [];
+      let statusCombo;
+      let mensagemDiagnostico;
+      if (precoVenda === 0) {
+        statusCombo = 'SEM_PRECO';
+        mensagemDiagnostico = 'Combo sem preço de venda.';
+      } else if (!temItens) {
+        statusCombo = 'SEM_COMPOSICAO';
+        mensagemDiagnostico = 'Monte o combo com produtos e bebidas.';
+      } else if (custoTotalCombo >= precoVenda || lucroBrutoCombo <= 0) {
+        statusCombo = 'CRITICO';
+        mensagemDiagnostico = 'Combo vendido sem lucro. Revise itens e preço.';
+      } else {
+        if (percentualDescontoCombo !== null && percentualDescontoCombo > 20) {
+          alertasCombo.push('Desconto do combo acima de 20% do valor separado.');
+        }
+        if (descontoCombo !== null && descontoCombo < 0) {
+          alertasCombo.push('Combo mais caro que os itens separados.');
+        }
+        if (margemComboPercentual !== null && margemComboPercentual < 25) {
+          alertasCombo.push('Margem do combo abaixo de 25%.');
+        }
+        if (cmvComboPercentual !== null && cmvComboPercentual > 50) {
+          alertasCombo.push('CMV do combo acima de 50%.');
+        }
+        if (alertasCombo.length > 0) {
+          statusCombo = 'ATENCAO';
+          mensagemDiagnostico = alertasCombo[0];
+        } else {
+          statusCombo = 'SAUDAVEL';
+          mensagemDiagnostico = 'Combo saudável: lucro e margem dentro do esperado.';
+        }
+      }
+
       return res.json({
         produto: produtoOut,
         precoVenda: round2(precoVenda),
+        // Campos próprios do combo
+        quantidadeItensCombo: comboItensResumo.length,
+        comboItensResumo,
+        valorItensSeparados: round2(valorItensSeparados),
+        custoTotalCombo: round2(custoTotalCombo),
+        descontoCombo: descontoCombo === null ? null : round2(descontoCombo),
+        percentualDescontoCombo:
+          percentualDescontoCombo === null ? null : round2(percentualDescontoCombo),
+        cmvComboPercentual: cmvComboPercentual === null ? null : round2(cmvComboPercentual),
+        lucroBrutoCombo: lucroBrutoCombo === null ? null : round2(lucroBrutoCombo),
+        margemComboPercentual:
+          margemComboPercentual === null ? null : round2(margemComboPercentual),
+        ticketGerado: round2(precoVenda),
+        statusCombo,
+        alertasCombo,
+        // Compatibilidade com a listagem/Dashboard
         custoFichaTecnica: 0,
-        custoComMargem: 0,
+        custoComMargem: round2(custoTotalCombo),
         custoEmbutido: 0,
-        custoTotalFicha: 0,
-        custoProduto: 0,
-        custoTotalReal: 0,
+        custoTotalFicha: round2(custoTotalCombo),
+        custoProduto: round2(custoTotalCombo),
+        custoTotalReal: round2(custoTotalCombo),
         cmvProdutoPercentual: null,
-        percentualTotalReal: null,
+        percentualTotalReal: cmvComboPercentual === null ? null : round2(cmvComboPercentual),
         percentualCustoEmbutido: null,
-        lucroBrutoReal: null,
-        margemRealPercentual: null,
+        lucroBrutoReal: lucroBrutoCombo === null ? null : round2(lucroBrutoCombo),
+        margemRealPercentual:
+          margemComboPercentual === null ? null : round2(margemComboPercentual),
         alertaCustoTotal: null,
         alertaCustoEmbutido: null,
-        lucroBruto: null,
-        cmvPercentual: null,
-        margemBrutaPercentual: null,
-        statusCmv: 'SEM_COMPOSICAO',
-        statusGeral: 'SEM_COMPOSICAO',
-        mensagemDiagnostico:
-          'Combo sem composição. Monte o combo com produtos e bebidas na próxima etapa.',
+        lucroBruto: lucroBrutoCombo === null ? null : round2(lucroBrutoCombo),
+        cmvPercentual: cmvComboPercentual === null ? null : round2(cmvComboPercentual),
+        margemBrutaPercentual:
+          margemComboPercentual === null ? null : round2(margemComboPercentual),
+        statusCmv: statusCombo,
+        statusGeral: statusCombo,
+        mensagemDiagnostico,
         ...precificacaoCombo,
         precoSugerido: null,
         diferencaPrecoSugerido: null,
@@ -1444,7 +1673,7 @@ app.get('/api/produtos/:id/analise', async (req, res) => {
             ? null
             : round2(precificacaoCombo.precoIfood - precoVenda),
         mensagemPrecificacao:
-          'A composição do combo será configurada em uma próxima etapa.'
+          'Combo: análise por desconto, lucro bruto e margem sobre os itens que o compõem.'
       });
     }
 
