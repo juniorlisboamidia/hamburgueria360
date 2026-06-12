@@ -379,8 +379,15 @@ app.post('/api/insumos/:id/receita', async (req, res) => {
       });
     }
 
-    const { rendimento, unidadeRendimento, pesoPorcao, unidadePorcao, observacoes } =
-      req.body ?? {};
+    const {
+      rendimento,
+      unidadeRendimento,
+      modoRendimento,
+      quantidadePorcoes,
+      pesoPorcao,
+      unidadePorcao,
+      observacoes
+    } = req.body ?? {};
 
     // Rendimento agora é opcional: 0 = ainda não informado. Isso permite criar a
     // receita e adicionar ingredientes antes de saber o rendimento final; o custo
@@ -392,30 +399,73 @@ app.post('/api/insumos/:id/receita', async (req, res) => {
       }
       rendimentoFinal = Number(rendimento);
     }
-    const unidadeRendimentoFinal =
+    let unidadeRendimentoFinal =
       typeof unidadeRendimento === 'string' ? unidadeRendimento.trim() : '';
-    if (rendimentoFinal > 0 && unidadeRendimentoFinal === '') {
-      return res.status(400).json({
-        error: 'unidadeRendimento é obrigatória quando o rendimento é informado'
-      });
-    }
     if (pesoPorcao !== undefined && pesoPorcao !== null && pesoPorcao !== '') {
       if (isNaN(Number(pesoPorcao)) || Number(pesoPorcao) <= 0) {
         return res.status(400).json({ error: 'pesoPorcao deve ser numérico e maior que zero' });
       }
     }
+    const pesoPorcaoFinal =
+      pesoPorcao === undefined || pesoPorcao === null || pesoPorcao === ''
+        ? null
+        : Number(pesoPorcao);
+
+    // Modo de rendimento: TOTAL (informa o total direto, comportamento original)
+    // ou PORCOES (informa quantidade × tamanho e o total é calculado aqui).
+    // Receitas antigas não têm o campo e seguem como TOTAL.
+    const modoFinal = modoRendimento === 'PORCOES' ? 'PORCOES' : 'TOTAL';
+    let quantidadePorcoesFinal = null;
+    if (quantidadePorcoes !== undefined && quantidadePorcoes !== null && quantidadePorcoes !== '') {
+      if (isNaN(Number(quantidadePorcoes)) || Number(quantidadePorcoes) <= 0) {
+        return res.status(400).json({ error: 'quantidadePorcoes deve ser numérica e maior que zero' });
+      }
+      quantidadePorcoesFinal = Number(quantidadePorcoes);
+    }
+
+    let unidadePorcaoFinal =
+      unidadePorcao === undefined || unidadePorcao === null || String(unidadePorcao).trim() === ''
+        ? null
+        : String(unidadePorcao).trim();
+
+    if (modoFinal === 'PORCOES') {
+      if (quantidadePorcoesFinal === null) {
+        return res.status(400).json({
+          error: 'quantidadePorcoes é obrigatória no modo de rendimento por porções'
+        });
+      }
+      const ui = normalizeUnidade(insumo.unidade);
+      if (ui === 'Kg' || ui === 'L') {
+        if (pesoPorcaoFinal === null) {
+          return res.status(400).json({
+            error:
+              'pesoPorcao (tamanho de cada unidade/porção) é obrigatório no modo por porções para insumo em ' +
+              ui
+          });
+        }
+        rendimentoFinal = quantidadePorcoesFinal * pesoPorcaoFinal;
+        unidadeRendimentoFinal = ui === 'Kg' ? 'g' : 'ml';
+        unidadePorcaoFinal = ui === 'Kg' ? 'g' : 'ml';
+      } else {
+        // Und (ou legado): cada porção é 1 unidade; tamanho é apenas informativo
+        rendimentoFinal = quantidadePorcoesFinal;
+        unidadeRendimentoFinal = 'Und';
+      }
+    }
+
+    if (rendimentoFinal > 0 && unidadeRendimentoFinal === '') {
+      return res.status(400).json({
+        error: 'unidadeRendimento é obrigatória quando o rendimento é informado'
+      });
+    }
 
     const data = {
       rendimento: rendimentoFinal,
       unidadeRendimento: unidadeRendimentoFinal,
-      pesoPorcao:
-        pesoPorcao === undefined || pesoPorcao === null || pesoPorcao === ''
-          ? null
-          : Number(pesoPorcao),
-      unidadePorcao:
-        unidadePorcao === undefined || unidadePorcao === null || String(unidadePorcao).trim() === ''
-          ? null
-          : String(unidadePorcao).trim(),
+      modoRendimento: modoFinal,
+      quantidadePorcoes: modoFinal === 'PORCOES' ? quantidadePorcoesFinal : null,
+      pesoPorcao: pesoPorcaoFinal,
+      unidadePorcao: unidadePorcaoFinal,
       observacoes:
         observacoes === undefined || observacoes === null || String(observacoes).trim() === ''
           ? null

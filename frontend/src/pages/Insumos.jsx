@@ -747,8 +747,10 @@ export default function Insumos() {
 // ============ Modal grande: receita de produção própria ============
 
 const RECEITA_FORM_BLANK = {
+  modoRendimento: 'TOTAL',
   rendimento: '',
   unidadeRendimento: '',
+  quantidadePorcoes: '',
   pesoPorcao: '',
   unidadePorcao: '',
   observacoes: ''
@@ -801,9 +803,15 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
           ? opcoes[0]
           : unidadeSalva
       setDadosForm({
+        // Receitas antigas não têm modoRendimento salvo: tratadas como TOTAL
+        modoRendimento: data.receita.modoRendimento === 'PORCOES' ? 'PORCOES' : 'TOTAL',
         // rendimento 0 = ainda não informado (receita criada antes do rendimento)
         rendimento: rendimentoNum > 0 ? String(rendimentoNum) : '',
         unidadeRendimento: unidadeAjustada,
+        quantidadePorcoes:
+          data.receita.quantidadePorcoes === null || data.receita.quantidadePorcoes === undefined
+            ? ''
+            : String(Number(data.receita.quantidadePorcoes)),
         pesoPorcao:
           data.receita.pesoPorcao === null || data.receita.pesoPorcao === undefined
             ? ''
@@ -850,14 +858,35 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
   function handleSaveDados(e) {
     e.preventDefault()
     setDadosError(null)
-    const r = Number(dadosForm.rendimento)
-    if (dadosForm.rendimento === '' || !Number.isFinite(r) || r <= 0) {
-      setDadosError('rendimento é obrigatório e deve ser maior que zero')
-      return
-    }
-    if (!dadosForm.unidadeRendimento.trim()) {
-      setDadosError('unidade do rendimento é obrigatória')
-      return
+    const modoPorcoes = dadosForm.modoRendimento === 'PORCOES'
+    const unidadeInsumo = unidadeNormalizada(insumo?.unidade)
+    if (modoPorcoes) {
+      const qtd = Number(dadosForm.quantidadePorcoes)
+      if (dadosForm.quantidadePorcoes === '' || !Number.isFinite(qtd) || qtd <= 0) {
+        setDadosError('quantidade de unidades/porções é obrigatória e deve ser maior que zero')
+        return
+      }
+      if (unidadeInsumo === 'Kg' || unidadeInsumo === 'L') {
+        const tam = Number(dadosForm.pesoPorcao)
+        if (dadosForm.pesoPorcao === '' || !Number.isFinite(tam) || tam <= 0) {
+          setDadosError(
+            unidadeInsumo === 'Kg'
+              ? 'tamanho de cada unidade (em g) é obrigatório e deve ser maior que zero'
+              : 'volume por unidade (em ml) é obrigatório e deve ser maior que zero'
+          )
+          return
+        }
+      }
+    } else {
+      const r = Number(dadosForm.rendimento)
+      if (dadosForm.rendimento === '' || !Number.isFinite(r) || r <= 0) {
+        setDadosError('rendimento é obrigatório e deve ser maior que zero')
+        return
+      }
+      if (!dadosForm.unidadeRendimento.trim()) {
+        setDadosError('unidade do rendimento é obrigatória')
+        return
+      }
     }
     if (dadosForm.pesoPorcao !== '' && (!Number.isFinite(Number(dadosForm.pesoPorcao)) || Number(dadosForm.pesoPorcao) <= 0)) {
       setDadosError('peso da porção deve ser maior que zero')
@@ -866,8 +895,13 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
     setDadosSaving(true)
     api
       .post(`/insumos/${insumoId}/receita`, {
-        rendimento: r,
-        unidadeRendimento: dadosForm.unidadeRendimento.trim(),
+        modoRendimento: dadosForm.modoRendimento,
+        // No modo PORCOES o backend calcula rendimento/unidade a partir de
+        // quantidadePorcoes × pesoPorcao (Und usa só a quantidade)
+        rendimento: modoPorcoes ? null : Number(dadosForm.rendimento),
+        unidadeRendimento: modoPorcoes ? null : dadosForm.unidadeRendimento.trim(),
+        quantidadePorcoes:
+          dadosForm.quantidadePorcoes === '' ? null : Number(dadosForm.quantidadePorcoes),
         pesoPorcao: dadosForm.pesoPorcao === '' ? null : Number(dadosForm.pesoPorcao),
         unidadePorcao: dadosForm.unidadePorcao.trim() === '' ? null : dadosForm.unidadePorcao.trim(),
         observacoes: dadosForm.observacoes.trim() === '' ? null : dadosForm.observacoes.trim()
@@ -1039,6 +1073,27 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
     ? (unidadeRendimentoCanonica(receita.unidadeRendimento) ?? receita.unidadeRendimento ?? '')
     : ''
   const unidadeInsumoProduzido = unidadeNormalizada(insumo?.unidade) ?? (insumo?.unidade ?? '')
+
+  // ===== Modo de rendimento por porções: total calculado em tempo real =====
+  // Kg/L: quantidade × tamanho (g/ml); Und: quantidade direto (tamanho informativo)
+  const modoPorcoesForm = dadosForm.modoRendimento === 'PORCOES'
+  const qtdPorcoesNum = Number(dadosForm.quantidadePorcoes)
+  const tamPorcaoNum = Number(dadosForm.pesoPorcao)
+  let rendimentoCalculado = null
+  let rendimentoCalculadoLabel = null
+  if (modoPorcoesForm && Number.isFinite(qtdPorcoesNum) && qtdPorcoesNum > 0) {
+    if (unidadeInsumoProduzido === 'Kg' || unidadeInsumoProduzido === 'L') {
+      if (Number.isFinite(tamPorcaoNum) && tamPorcaoNum > 0) {
+        rendimentoCalculado = qtdPorcoesNum * tamPorcaoNum
+        const menor = unidadeInsumoProduzido === 'Kg' ? 'g' : 'ml'
+        rendimentoCalculadoLabel =
+          `${num(rendimentoCalculado)} ${menor} = ${num(rendimentoCalculado / 1000)} ${unidadeInsumoProduzido}`
+      }
+    } else {
+      rendimentoCalculado = qtdPorcoesNum
+      rendimentoCalculadoLabel = `${num(rendimentoCalculado)} und`
+    }
+  }
   const rendimentoBase =
     receita?.rendimentoBase === null || receita?.rendimentoBase === undefined
       ? null
@@ -1286,68 +1341,145 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
             <div className="card">
               <form onSubmit={handleSaveDados}>
                 <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-                  <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 110 }}>
-                    <label className="form-label">Rendimento total</label>
-                    <input
-                      className="form-input"
-                      type="number"
-                      min="0"
-                      step="0.001"
-                      value={dadosForm.rendimento}
-                      onChange={(e) => setDadosForm({ ...dadosForm, rendimento: e.target.value })}
-                      placeholder="Ex.: 2"
-                    />
-                  </div>
-                  <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 130 }}>
-                    <label className="form-label">Unidade do rendimento</label>
+                  <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 150 }}>
+                    <label className="form-label">Modo de rendimento</label>
                     <select
                       className="form-input"
-                      value={dadosForm.unidadeRendimento}
-                      onChange={(e) => handleChangeUnidadeRendimento(e.target.value)}
+                      value={dadosForm.modoRendimento}
+                      onChange={(e) => setDadosForm({ ...dadosForm, modoRendimento: e.target.value })}
                     >
-                      {dadosForm.unidadeRendimento !== '' &&
-                        !opcoesUnidadeRendimento(unidadeInsumoProduzido).includes(
-                          dadosForm.unidadeRendimento
-                        ) && (
-                          <option value={dadosForm.unidadeRendimento}>
-                            {dadosForm.unidadeRendimento}
-                          </option>
-                        )}
-                      <option value="">— selecione —</option>
-                      {opcoesUnidadeRendimento(unidadeInsumoProduzido).map((u) => (
-                        <option key={u} value={u}>{u}</option>
-                      ))}
+                      <option value="TOTAL">Rendimento total</option>
+                      <option value="PORCOES">Porções/unidades</option>
                     </select>
                   </div>
-                  <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 140 }}>
-                    <label className="form-label">Tamanho da porção (opcional)</label>
-                    <input
-                      className="form-input"
-                      type="number"
-                      min="0"
-                      step="0.001"
-                      value={dadosForm.pesoPorcao}
-                      onChange={(e) => setDadosForm({ ...dadosForm, pesoPorcao: e.target.value })}
-                      placeholder="Ex.: 30"
-                    />
-                  </div>
-                  <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 110 }}>
-                    <label className="form-label">Unidade da porção</label>
-                    <select
-                      className="form-input"
-                      value={dadosForm.unidadePorcao}
-                      onChange={(e) => setDadosForm({ ...dadosForm, unidadePorcao: e.target.value })}
-                    >
-                      {dadosForm.unidadePorcao !== '' &&
-                        !UNIDADES_PORCAO.includes(dadosForm.unidadePorcao) && (
-                          <option value={dadosForm.unidadePorcao}>{dadosForm.unidadePorcao}</option>
-                        )}
-                      <option value="">—</option>
-                      {UNIDADES_PORCAO.map((u) => (
-                        <option key={u} value={u}>{u}</option>
-                      ))}
-                    </select>
-                  </div>
+
+                  {!modoPorcoesForm ? (
+                    <>
+                      <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 110 }}>
+                        <label className="form-label">Rendimento total</label>
+                        <input
+                          className="form-input"
+                          type="number"
+                          min="0"
+                          step="0.001"
+                          value={dadosForm.rendimento}
+                          onChange={(e) => setDadosForm({ ...dadosForm, rendimento: e.target.value })}
+                          placeholder="Ex.: 2"
+                        />
+                      </div>
+                      <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 130 }}>
+                        <label className="form-label">Unidade do rendimento</label>
+                        <select
+                          className="form-input"
+                          value={dadosForm.unidadeRendimento}
+                          onChange={(e) => handleChangeUnidadeRendimento(e.target.value)}
+                        >
+                          {dadosForm.unidadeRendimento !== '' &&
+                            !opcoesUnidadeRendimento(unidadeInsumoProduzido).includes(
+                              dadosForm.unidadeRendimento
+                            ) && (
+                              <option value={dadosForm.unidadeRendimento}>
+                                {dadosForm.unidadeRendimento}
+                              </option>
+                            )}
+                          <option value="">— selecione —</option>
+                          {opcoesUnidadeRendimento(unidadeInsumoProduzido).map((u) => (
+                            <option key={u} value={u}>{u}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 140 }}>
+                        <label className="form-label">Tamanho da porção (opcional)</label>
+                        <input
+                          className="form-input"
+                          type="number"
+                          min="0"
+                          step="0.001"
+                          value={dadosForm.pesoPorcao}
+                          onChange={(e) => setDadosForm({ ...dadosForm, pesoPorcao: e.target.value })}
+                          placeholder="Ex.: 30"
+                        />
+                      </div>
+                      <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 110 }}>
+                        <label className="form-label">Unidade da porção</label>
+                        <select
+                          className="form-input"
+                          value={dadosForm.unidadePorcao}
+                          onChange={(e) => setDadosForm({ ...dadosForm, unidadePorcao: e.target.value })}
+                        >
+                          {dadosForm.unidadePorcao !== '' &&
+                            !UNIDADES_PORCAO.includes(dadosForm.unidadePorcao) && (
+                              <option value={dadosForm.unidadePorcao}>{dadosForm.unidadePorcao}</option>
+                            )}
+                          <option value="">—</option>
+                          {UNIDADES_PORCAO.map((u) => (
+                            <option key={u} value={u}>{u}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 150 }}>
+                        <label className="form-label">Quantidade de unidades/porções</label>
+                        <input
+                          className="form-input"
+                          type="number"
+                          min="0"
+                          step="0.001"
+                          value={dadosForm.quantidadePorcoes}
+                          onChange={(e) =>
+                            setDadosForm({ ...dadosForm, quantidadePorcoes: e.target.value })
+                          }
+                        />
+                      </div>
+                      {(unidadeInsumoProduzido === 'Kg' || unidadeInsumoProduzido === 'L') ? (
+                        <>
+                          <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 150 }}>
+                            <label className="form-label">
+                              {unidadeInsumoProduzido === 'Kg'
+                                ? 'Tamanho de cada unidade (g)'
+                                : 'Volume por unidade (ml)'}
+                            </label>
+                            <input
+                              className="form-input"
+                              type="number"
+                              min="0"
+                              step="0.001"
+                              value={dadosForm.pesoPorcao}
+                              onChange={(e) =>
+                                setDadosForm({ ...dadosForm, pesoPorcao: e.target.value })
+                              }
+                            />
+                          </div>
+                          <div className="form-group" style={{ marginBottom: 0, flex: 0.6, minWidth: 80 }}>
+                            <label className="form-label">Unidade</label>
+                            <input
+                              className="form-input"
+                              type="text"
+                              value={unidadeInsumoProduzido === 'Kg' ? 'g' : 'ml'}
+                              disabled
+                            />
+                          </div>
+                        </>
+                      ) : (
+                        <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 160 }}>
+                          <label className="form-label">Tamanho por unidade (opcional)</label>
+                          <input
+                            className="form-input"
+                            type="number"
+                            min="0"
+                            step="0.001"
+                            value={dadosForm.pesoPorcao}
+                            onChange={(e) =>
+                              setDadosForm({ ...dadosForm, pesoPorcao: e.target.value })
+                            }
+                          />
+                        </div>
+                      )}
+                    </>
+                  )}
+
                   <div className="form-group" style={{ marginBottom: 0, flex: 1.5, minWidth: 150 }}>
                     <label className="form-label">Observações (opcional)</label>
                     <input
@@ -1362,9 +1494,16 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
                     {dadosSaving ? 'Salvando…' : 'Salvar dados da receita'}
                   </button>
                 </div>
+                {modoPorcoesForm && rendimentoCalculadoLabel && (
+                  <div style={{ fontSize: 12.5, fontWeight: 600, color: '#333', marginTop: 10 }}>
+                    Rendimento total calculado: {rendimentoCalculadoLabel}
+                  </div>
+                )}
                 <div style={{ fontSize: 11.5, color: '#999', marginTop: 8 }}>
-                  {AJUDA_RENDIMENTO[unidadeInsumoProduzido] ??
-                    'Escolha como o rendimento final da receita será medido. Ex.: essa receita rendeu 2 Kg e cada porção usada tem 30 g.'}
+                  {modoPorcoesForm
+                    ? 'Use este modo quando a receita rende unidades padronizadas, como 70 coxinhas de 25 g.'
+                    : AJUDA_RENDIMENTO[unidadeInsumoProduzido] ??
+                      'Escolha como o rendimento final da receita será medido. Ex.: essa receita rendeu 2 Kg e cada porção usada tem 30 g.'}
                 </div>
                 {dadosError && (
                   <div className="alert alert-red" style={{ marginTop: 12, marginBottom: 0 }}>

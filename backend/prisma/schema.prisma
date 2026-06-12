@@ -54,6 +54,11 @@ model ReceitaProducao {
   insumoId          Int      @unique
   rendimento        Decimal  @db.Decimal(10, 3)
   unidadeRendimento String
+  // Modo de cadastro do rendimento: "TOTAL" (informa o total direto) ou
+  // "PORCOES" (informa quantidadePorcoes × pesoPorcao e o total é calculado).
+  // Null em receitas antigas = TOTAL.
+  modoRendimento    String?  @default("TOTAL")
+  quantidadePorcoes Decimal? @db.Decimal(10, 3)
   pesoPorcao        Decimal? @db.Decimal(10, 3)
   unidadePorcao     String?
   observacoes       String?
