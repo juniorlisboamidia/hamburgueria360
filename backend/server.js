@@ -816,6 +816,73 @@ app.delete('/api/produtos/:id', async (req, res) => {
   }
 });
 
+// Duplica produto/bebida/combo: novo registro "(cópia)" nascendo ATIVO.
+// PRODUTO copia a ficha técnica (ficha independente da original); COMBO copia
+// a composição apontando para os mesmos produtos/bebidas (sem duplicá-los).
+app.post('/api/produtos/:id/duplicar', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id) || id <= 0) {
+      return res.status(400).json({ error: 'id inválido' });
+    }
+
+    const original = await prisma.produto.findUnique({
+      where: { id },
+      include: { fichaTecnica: true, comboItens: true }
+    });
+    if (!original || !original.ativo) {
+      return res.status(404).json({ error: 'Produto não encontrado' });
+    }
+
+    const tipo = original.tipoProduto ?? 'PRODUTO';
+
+    const novo = await prisma.$transaction(async (tx) => {
+      const criado = await tx.produto.create({
+        data: {
+          nome: `${original.nome} (cópia)`,
+          descricao: original.descricao,
+          precoVenda: original.precoVenda,
+          tipoProduto: tipo,
+          custoDireto: original.custoDireto,
+          ativo: true
+        }
+      });
+
+      if (tipo === 'PRODUTO' && original.fichaTecnica.length > 0) {
+        await tx.fichaTecnicaItem.createMany({
+          data: original.fichaTecnica.map((item) => ({
+            produtoId: criado.id,
+            insumoId: item.insumoId,
+            quantidade: item.quantidade,
+            modoUsoQuantidade: item.modoUsoQuantidade,
+            tipoUso: item.tipoUso,
+            formaRateio: item.formaRateio,
+            quantidadeAtendida: item.quantidadeAtendida,
+            aplicarMargem: item.aplicarMargem
+          }))
+        });
+      }
+
+      if (tipo === 'COMBO' && original.comboItens.length > 0) {
+        await tx.comboItem.createMany({
+          data: original.comboItens.map((item) => ({
+            comboId: criado.id,
+            produtoId: item.produtoId,
+            quantidade: item.quantidade
+          }))
+        });
+      }
+
+      return criado;
+    });
+
+    res.status(201).json(novo);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro interno ao duplicar produto' });
+  }
+});
+
 // ===== Itens de Combo =====
 // Combo é composto por produtos/bebidas prontos (nunca insumos, nunca outro combo)
 

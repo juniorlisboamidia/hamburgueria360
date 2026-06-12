@@ -315,6 +315,23 @@ a { text-decoration: none; color: inherit; }
 .btn-secondary { background: #f5f5f5; color: #555; border: 1px solid #e8e8e8; }
 .btn-danger    { background: #fef2f2; color: #dc2626; border: 1px solid #fecaca; }
 .btn-sm        { padding: 5px 10px; font-size: 12px; border-radius: 7px; }
+/* Ação secundária discreta (ex.: duplicar) — só ícone, mesma altura dos
+   botões principais, largura compacta */
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: stretch; /* mesma altura da linha de ações (Editar/Excluir) */
+  padding: 0 10px;
+  background: #fff;
+  color: #9ca3af;
+  border: 1px solid #e8e8e8;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: color 0.12s, background 0.12s, border-color 0.12s;
+}
+.btn-icon:hover { opacity: 1; color: #555; background: #f9fafb; border-color: #d8d8d8; }
+.btn-icon:disabled { opacity: 0.5; cursor: default; }
 
 /* Alertas */
 .alert { border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; display: flex; gap: 10px; align-items: flex-start; }

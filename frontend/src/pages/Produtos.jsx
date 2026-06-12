@@ -184,6 +184,15 @@ const TIPOS_PRODUTO_TABS = [
 function tipoDoProduto(p) {
   return p?.tipoProduto ?? 'PRODUTO'
 }
+// Textos por tipo para ConfirmDialog/Toast (concordância de gênero)
+const TIPO_TEXTO = {
+  PRODUTO: { nome: 'produto', Nome: 'Produto', excluido: 'excluído', duplicado: 'duplicado' },
+  BEBIDA:  { nome: 'bebida',  Nome: 'Bebida',  excluido: 'excluída', duplicado: 'duplicada' },
+  COMBO:   { nome: 'combo',   Nome: 'Combo',   excluido: 'excluído', duplicado: 'duplicado' }
+}
+function textosDoTipo(p) {
+  return TIPO_TEXTO[tipoDoProduto(p)] ?? TIPO_TEXTO.PRODUTO
+}
 const CMV_COLOR_CLASS = {
   SAUDAVEL:  'clr-green',
   ATENCAO:   'clr-yellow',
@@ -262,7 +271,8 @@ export default function Produtos() {
   const [creating, setCreating] = useState(false)
 
   const [deletingId, setDeletingId] = useState(null)
-  const [produtoParaInativar, setProdutoParaInativar] = useState(null)
+  const [duplicandoId, setDuplicandoId] = useState(null)
+  const [produtoParaExcluir, setProdutoParaExcluir] = useState(null)
   const [toast, setToast] = useState(null)
 
   const [fichaProdutoId, setFichaProdutoId] = useState(null)
@@ -341,29 +351,49 @@ export default function Produtos() {
   }
 
   function handleDelete(p) {
-    setProdutoParaInativar(p)
+    setProdutoParaExcluir(p)
   }
 
-  function confirmInativarProduto() {
-    const p = produtoParaInativar
+  // "Excluir" na interface = soft delete: o backend apenas marca ativo=false
+  function confirmExcluirProduto() {
+    const p = produtoParaExcluir
     if (!p) return
+    const t = textosDoTipo(p)
     setDeletingId(p.id)
     api
       .delete(`/produtos/${p.id}`)
       .then(() => {
-        setToast({ message: `Produto "${p.nome}" inativado.`, type: 'success' })
+        setToast({ message: `${t.Nome} "${p.nome}" ${t.excluido} com sucesso.`, type: 'success' })
         load()
       })
       .catch((e) =>
         setToast({
-          message: e?.response?.data?.error ?? e?.message ?? 'Erro ao inativar produto.',
+          message: e?.response?.data?.error ?? e?.message ?? `Erro ao excluir ${t.nome}.`,
           type: 'error'
         })
       )
       .finally(() => {
         setDeletingId(null)
-        setProdutoParaInativar(null)
+        setProdutoParaExcluir(null)
       })
+  }
+
+  function handleDuplicar(p) {
+    const t = textosDoTipo(p)
+    setDuplicandoId(p.id)
+    api
+      .post(`/produtos/${p.id}/duplicar`)
+      .then(() => {
+        setToast({ message: `${t.Nome} ${t.duplicado} com sucesso.`, type: 'success' })
+        return refresh()
+      })
+      .catch((e) =>
+        setToast({
+          message: e?.response?.data?.error ?? e?.message ?? `Erro ao duplicar ${t.nome}.`,
+          type: 'error'
+        })
+      )
+      .finally(() => setDuplicandoId(null))
   }
 
   if (loading) {
@@ -420,20 +450,20 @@ export default function Produtos() {
       />
 
       <ConfirmDialog
-        open={produtoParaInativar !== null}
-        title="Inativar produto?"
+        open={produtoParaExcluir !== null}
+        title={`Excluir ${textosDoTipo(produtoParaExcluir).nome}?`}
         message={
-          produtoParaInativar
-            ? `Você está prestes a inativar "${produtoParaInativar.nome}".`
+          produtoParaExcluir
+            ? `Você está prestes a excluir "${produtoParaExcluir.nome}".`
             : ''
         }
-        description="O produto sai do cardápio e dos cálculos, mas o histórico é preservado."
-        confirmLabel="Inativar produto"
+        description="O item sai do cardápio e dos cálculos, mas o histórico é preservado."
+        confirmLabel={`Excluir ${textosDoTipo(produtoParaExcluir).nome}`}
         cancelLabel="Cancelar"
         variant="danger"
         loading={deletingId !== null}
-        onConfirm={confirmInativarProduto}
-        onCancel={() => setProdutoParaInativar(null)}
+        onConfirm={confirmExcluirProduto}
+        onCancel={() => setProdutoParaExcluir(null)}
       />
 
       {createOpen && (
@@ -849,7 +879,30 @@ export default function Produtos() {
                   ))}
                 </div>
 
-                <div style={{ marginTop: 12, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                <div style={{ marginTop: 12, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <button
+                    type="button"
+                    className="btn btn-icon"
+                    title={`Duplicar ${textosDoTipo(p).nome}`}
+                    aria-label={`Duplicar ${textosDoTipo(p).nome}`}
+                    onClick={() => handleDuplicar(p)}
+                    disabled={duplicandoId === p.id}
+                  >
+                    <svg
+                      width="15"
+                      height="15"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <rect x="9" y="9" width="12" height="12" rx="2.5" />
+                      <path d="M5 15c-1.1 0-2-.9-2-2V5c0-1.1.9-2 2-2h8c1.1 0 2 .9 2 2" />
+                    </svg>
+                  </button>
                   <button
                     type="button"
                     className="btn btn-primary"
@@ -863,7 +916,7 @@ export default function Produtos() {
                     onClick={() => handleDelete(p)}
                     disabled={deletingId === p.id}
                   >
-                    {deletingId === p.id ? 'Inativando…' : 'Inativar'}
+                    {deletingId === p.id ? 'Excluindo…' : 'Excluir'}
                   </button>
                 </div>
               </div>
