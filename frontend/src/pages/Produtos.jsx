@@ -45,6 +45,16 @@ function sufixoQuantidade(unidadeInsumo) {
   return 'und'
 }
 
+// Cor informativa do "CMV + custo embutido" (percentual total real). Não altera
+// o badge Saudável/Atenção/Crítico, que segue baseado só no CMV do produto.
+function classePercentualTotal(p) {
+  if (p === null || p === undefined) return ''
+  const v = Number(p)
+  if (v > 40) return 'clr-red'
+  if (v > 35) return 'clr-orange'
+  return 'clr-green'
+}
+
 // Alertas informativos da ficha técnica (heurísticas de revisão — não bloqueiam nada)
 function buildAlertasFicha(analise, itens) {
   const alertas = []
@@ -469,7 +479,7 @@ export default function Produtos() {
         <Card
           title="CMV Crítico"
           value={int(criticos)}
-          hint="Acima de 40%"
+          hint="CMV do produto acima de 35%"
           variant={criticos > 0 ? 'danger' : 'success'}
         />
         <Card
@@ -490,6 +500,9 @@ export default function Produtos() {
         <div className="grid-3">
           {produtos.map((p) => {
             const a = p.analise ?? {}
+            // Badge = saúde GERAL da precificação (statusGeral); a linha "CMV do
+            // produto" continua colorida pelo statusCmv (leitura isolada do CMV)
+            const statusGeralProduto = a.statusGeral ?? a.statusCmv
             const semFichaProduto = a.statusCmv === 'SEM_FICHA'
             const semPrecoProduto = a.statusCmv === 'SEM_PRECO'
             const cmvClass = CMV_COLOR_CLASS[a.statusCmv] ?? ''
@@ -510,6 +523,8 @@ export default function Produtos() {
               if (a.statusCmv === 'ALERTA') diagnosticos.push({ texto: 'CMV em alerta', cls: 'clr-orange' })
               if (a.statusCmv === 'CRITICO') diagnosticos.push({ texto: 'CMV crítico', cls: 'clr-red' })
               if (abaixoDoSugerido) diagnosticos.push({ texto: 'Preço abaixo do sugerido', cls: 'clr-orange' })
+              if (a.alertaCustoEmbutido) diagnosticos.push({ texto: 'Custo embutido elevado', cls: 'clr-orange' })
+              if (a.alertaCustoTotal) diagnosticos.push({ texto: 'Custo total acima de 40%', cls: 'clr-red' })
               if (diagnosticos.length === 0) diagnosticos.push({ texto: 'Precificação saudável', cls: 'clr-green' })
             }
 
@@ -531,8 +546,8 @@ export default function Produtos() {
                       <div style={{ fontSize: 11, color: '#aaa', marginTop: 2 }}>{p.descricao}</div>
                     )}
                   </div>
-                  <span className={'badge ' + (STATUS_BADGE[a.statusCmv] ?? 'badge-gray')}>
-                    {STATUS_LABEL[a.statusCmv] ?? a.statusCmv ?? '—'}
+                  <span className={'badge ' + (STATUS_BADGE[statusGeralProduto] ?? 'badge-gray')}>
+                    {STATUS_LABEL[statusGeralProduto] ?? statusGeralProduto ?? '—'}
                   </span>
                 </div>
 
@@ -582,13 +597,19 @@ export default function Produtos() {
                       ? <span className="clr-muted">—</span>
                       : <span className={cmvClass} style={{ fontWeight: 600 }}>{pct(a.cmvProdutoPercentual)}</span>}
                   </MetricRow>
+                  <MetricRow label="CMV + custo embutido">
+                    {a.percentualTotalReal === null || a.percentualTotalReal === undefined
+                      ? <span className="clr-muted">—</span>
+                      : (
+                        <span className={classePercentualTotal(a.percentualTotalReal)} style={{ fontWeight: 600 }}>
+                          {pct(a.percentualTotalReal)}
+                        </span>
+                      )}
+                  </MetricRow>
                   <MetricRow label="Custo total real">
                     {semFichaProduto
                       ? <span className="clr-muted">Não cadastrado</span>
                       : brl(a.custoTotalReal ?? a.custoFichaTecnica)}
-                  </MetricRow>
-                  <MetricRow label="Margem real">
-                    {pct(a.margemRealPercentual ?? a.margemBrutaPercentual)}
                   </MetricRow>
                   <MetricRow label="Lucro bruto real">
                     {a.lucroBruto === null || a.lucroBruto === undefined
@@ -1166,6 +1187,9 @@ function FichaModal({ produtoId, onClose, onChanged }) {
   }
 
   const status = analise?.statusCmv
+  // Badge do cabeçalho do modal segue a saúde geral; o card "CMV do Produto"
+  // continua colorido pelo statusCmv
+  const statusGeralModal = analise?.statusGeral ?? status
   const semFicha = status === 'SEM_FICHA'
 
   const insumoSelecionado = insumos.find((x) => String(x.id) === formInsumoId)
@@ -1196,9 +1220,9 @@ function FichaModal({ produtoId, onClose, onChanged }) {
             <span style={{ fontSize: 17, fontWeight: 600, color: '#111' }}>
               {produto?.nome ?? 'Ficha do produto'}
             </span>
-            {status && (
-              <span className={'badge ' + (STATUS_BADGE[status] ?? 'badge-gray')}>
-                {STATUS_LABEL[status] ?? status}
+            {statusGeralModal && (
+              <span className={'badge ' + (STATUS_BADGE[statusGeralModal] ?? 'badge-gray')}>
+                {STATUS_LABEL[statusGeralModal] ?? statusGeralModal}
               </span>
             )}
           </div>

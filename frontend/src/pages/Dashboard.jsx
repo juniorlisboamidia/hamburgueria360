@@ -152,9 +152,12 @@ export default function Dashboard() {
 
   // ===== Saúde dos produtos (classificação com dados já retornados pela análise) =====
   const totalProdutos = produtos.length
-  const saudaveis = produtos.filter((p) => p.analise?.statusCmv === 'SAUDAVEL')
-  const atencao = produtos.filter((p) => p.analise?.statusCmv === 'ATENCAO')
-  const criticos = produtos.filter((p) => p.analise?.statusCmv === 'CRITICO')
+  // Contagens pela saúde GERAL da precificação (statusGeral): preço abaixo do
+  // sugerido e custo embutido alto contam como atenção, não como saudável
+  const statusGeralDe = (p) => p.analise?.statusGeral ?? p.analise?.statusCmv
+  const saudaveis = produtos.filter((p) => statusGeralDe(p) === 'SAUDAVEL')
+  const atencao = produtos.filter((p) => statusGeralDe(p) === 'ATENCAO')
+  const criticos = produtos.filter((p) => statusGeralDe(p) === 'CRITICO')
   const semFicha = produtos.filter((p) => p.analise?.statusCmv === 'SEM_FICHA')
   const semPreco = produtos.filter((p) => p.analise?.statusCmv === 'SEM_PRECO')
   const cmvAcima100 = produtos.filter(
@@ -206,7 +209,7 @@ export default function Dashboard() {
   if (criticos.length > 0) {
     alertas.push({
       nivel: 'alert-red',
-      texto: `${criticos.length} produto(s) estão com CMV do produto crítico.`
+      texto: `${criticos.length} produto(s) estão com precificação crítica.`
     })
   }
   if (cmvAcima100.length > 0) {
@@ -243,7 +246,7 @@ export default function Dashboard() {
   if (semFicha.length > 0) acoes.push('Completar a ficha técnica dos produtos sem ficha.')
   if (semPreco.length > 0) acoes.push('Definir o preço de venda dos produtos sem preço.')
   if (cmvAcima100.length > 0) acoes.push('Revisar produtos com custo total acima do preço de venda.')
-  else if (criticos.length > 0) acoes.push('Revisar preço e ficha dos produtos com CMV do produto crítico.')
+  else if (criticos.length > 0) acoes.push('Revisar preço e ficha dos produtos com precificação crítica.')
   if (ppACalcular.length > 0) acoes.push('Atualizar o custo das produções próprias a calcular.')
   if (insumosSemCusto.length > 0) acoes.push('Informar o custo dos insumos sem custo válido.')
   if (abaixoSugerido.length > 0) acoes.push('Revisar produtos vendidos abaixo do preço sugerido.')
@@ -415,8 +418,8 @@ export default function Dashboard() {
               value={int(criticos.length)}
               hint={
                 atencao.length > 0
-                  ? `${int(atencao.length)} em atenção · por CMV do produto`
-                  : 'CMV do produto acima de 35%'
+                  ? `${int(atencao.length)} em atenção · precificação geral`
+                  : 'CMV do produto alto ou lucro negativo'
               }
               variant={criticos.length > 0 ? 'danger' : 'success'}
             />

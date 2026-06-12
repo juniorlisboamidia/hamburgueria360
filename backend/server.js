@@ -1225,6 +1225,7 @@ app.get('/api/produtos/:id/analise', async (req, res) => {
         cmvPercentual: null,
         margemBrutaPercentual: null,
         statusCmv: 'SEM_FICHA',
+        statusGeral: 'SEM_FICHA',
         mensagemDiagnostico:
           'Produto sem ficha técnica cadastrada. Cadastre os insumos para calcular CMV e margem real.',
         ...precificacaoVazia,
@@ -1263,6 +1264,7 @@ app.get('/api/produtos/:id/analise', async (req, res) => {
         cmvPercentual: null,
         margemBrutaPercentual: null,
         statusCmv: 'SEM_PRECO',
+        statusGeral: 'SEM_PRECO',
         mensagemDiagnostico:
           'Produto sem preço de venda válido para cálculo de CMV e margem.',
         ...precificacao,
@@ -1314,6 +1316,26 @@ app.get('/api/produtos/:id/analise', async (req, res) => {
         ? 'Custo embutido elevado. Avalie compensar no preço, taxa de entrega ou pedido mínimo.'
         : null;
 
+    // Status GERAL da precificação (badge do produto). statusCmv segue medindo só
+    // o CMV do produto; aqui entram também preço abaixo do sugerido, custo
+    // embutido/total elevados e lucro real negativo. Tolerância de R$ 0,01 no
+    // preço sugerido para não marcar atenção por arredondamento de centavos.
+    const precoAbaixoSugerido =
+      precificacao.precoSugerido !== null && precoVenda < precificacao.precoSugerido - 0.01;
+    let statusGeral;
+    if (cmvProdutoPercentual > 35 || lucroBrutoReal < 0) {
+      statusGeral = 'CRITICO';
+    } else if (
+      cmvProdutoPercentual > 30 ||
+      precoAbaixoSugerido ||
+      alertaCustoEmbutido !== null ||
+      alertaCustoTotal !== null
+    ) {
+      statusGeral = 'ATENCAO';
+    } else {
+      statusGeral = 'SAUDAVEL';
+    }
+
     let mensagemPrecificacao;
     if (precificacao.precoSugerido === null) {
       mensagemPrecificacao =
@@ -1353,6 +1375,7 @@ app.get('/api/produtos/:id/analise', async (req, res) => {
       cmvPercentual: round2(cmvPercentual),
       margemBrutaPercentual: round2(margemBrutaPercentual),
       statusCmv,
+      statusGeral,
       mensagemDiagnostico,
       ...precificacao,
       diferencaPrecoSugerido:
