@@ -162,7 +162,8 @@ const STATUS_BADGE = {
   ALERTA:    'badge-orange',
   CRITICO:   'badge-red',
   SEM_FICHA: 'badge-blue',
-  SEM_PRECO: 'badge-gray'
+  SEM_PRECO: 'badge-gray',
+  SEM_COMPOSICAO: 'badge-gray'
 }
 const STATUS_LABEL = {
   SAUDAVEL:  'Saudável',
@@ -170,7 +171,18 @@ const STATUS_LABEL = {
   ALERTA:    'Alerta',
   CRITICO:   'Crítico',
   SEM_FICHA: 'Sem ficha',
-  SEM_PRECO: 'Sem preço'
+  SEM_PRECO: 'Sem preço',
+  SEM_COMPOSICAO: 'Composição pendente'
+}
+
+// Abas da listagem: produtos antigos sem tipoProduto contam como PRODUTO
+const TIPOS_PRODUTO_TABS = [
+  { value: 'PRODUTO', label: 'Produtos' },
+  { value: 'BEBIDA', label: 'Bebidas' },
+  { value: 'COMBO', label: 'Combos' }
+]
+function tipoDoProduto(p) {
+  return p?.tipoProduto ?? 'PRODUTO'
 }
 const CMV_COLOR_CLASS = {
   SAUDAVEL:  'clr-green',
@@ -179,9 +191,9 @@ const CMV_COLOR_CLASS = {
   CRITICO:   'clr-red'
 }
 
-const FORM_BLANK = { nome: '', descricao: '', precoVenda: '' }
+const FORM_BLANK = { nome: '', descricao: '', precoVenda: '', tipoProduto: 'PRODUTO', custoDireto: '' }
 
-function validateForm({ nome, precoVenda }) {
+function validateForm({ nome, precoVenda, tipoProduto, custoDireto }) {
   if (!nome || nome.trim() === '') return 'nome é obrigatório'
   if (precoVenda === '' || precoVenda === null || precoVenda === undefined) {
     return 'preço de venda é obrigatório'
@@ -189,6 +201,10 @@ function validateForm({ nome, precoVenda }) {
   const v = Number(precoVenda)
   if (!Number.isFinite(v)) return 'preço de venda deve ser numérico'
   if (v < 0) return 'preço de venda deve ser maior ou igual a zero'
+  if (tipoProduto === 'BEBIDA' && custoDireto !== '' && custoDireto !== undefined) {
+    const c = Number(custoDireto)
+    if (!Number.isFinite(c) || c < 0) return 'custo de compra deve ser maior ou igual a zero'
+  }
   return null
 }
 
@@ -196,7 +212,10 @@ function payloadFromForm(form) {
   return {
     nome: form.nome.trim(),
     descricao: form.descricao.trim() === '' ? null : form.descricao.trim(),
-    precoVenda: Number(form.precoVenda)
+    precoVenda: Number(form.precoVenda),
+    tipoProduto: form.tipoProduto ?? 'PRODUTO',
+    custoDireto:
+      form.tipoProduto === 'BEBIDA' && form.custoDireto !== '' ? Number(form.custoDireto) : null
   }
 }
 
@@ -248,6 +267,7 @@ export default function Produtos() {
 
   const [fichaProdutoId, setFichaProdutoId] = useState(null)
   const [configOpen, setConfigOpen] = useState(false)
+  const [tipoTab, setTipoTab] = useState('PRODUTO')
 
   function fetchProdutos() {
     return api
@@ -365,11 +385,16 @@ export default function Produtos() {
     )
   }
 
-  // Métricas agregadas
-  const totalAtivos = produtos.length
-  const semFicha = produtos.filter((p) => p.analise?.statusCmv === 'SEM_FICHA').length
-  const criticos = produtos.filter((p) => p.analise?.statusCmv === 'CRITICO').length
+  // Métricas agregadas: ficha técnica e CMV são conceitos de PRODUTO montado —
+  // bebidas e combos não entram nessas contagens
+  const produtosMontados = produtos.filter((p) => tipoDoProduto(p) === 'PRODUTO')
+  const totalAtivos = produtosMontados.length
+  const semFicha = produtosMontados.filter((p) => p.analise?.statusCmv === 'SEM_FICHA').length
+  const criticos = produtosMontados.filter((p) => p.analise?.statusCmv === 'CRITICO').length
   const fichasCadastradas = totalAtivos - semFicha
+
+  // Itens da aba selecionada
+  const produtosDaAba = produtos.filter((p) => tipoDoProduto(p) === tipoTab)
 
   return (
     <div>
@@ -419,26 +444,46 @@ export default function Produtos() {
             <div className="modal-title">Novo produto</div>
             <form onSubmit={handleCreate}>
               <div className="form-group" style={{ marginBottom: 12 }}>
+                <label className="form-label">Tipo</label>
+                <select
+                  className="form-input"
+                  value={createForm.tipoProduto}
+                  onChange={(e) => setCreateForm({ ...createForm, tipoProduto: e.target.value })}
+                >
+                  <option value="PRODUTO">Produto</option>
+                  <option value="BEBIDA">Bebida</option>
+                  <option value="COMBO">Combo</option>
+                </select>
+              </div>
+              <div className="form-group" style={{ marginBottom: 12 }}>
                 <label className="form-label">Nome</label>
                 <input
                   className="form-input"
                   type="text"
                   value={createForm.nome}
                   onChange={(e) => setCreateForm({ ...createForm, nome: e.target.value })}
-                  placeholder="X-Burger Especial"
+                  placeholder={
+                    createForm.tipoProduto === 'BEBIDA'
+                      ? 'Coca lata'
+                      : createForm.tipoProduto === 'COMBO'
+                      ? 'Combo X-Burger + bebida'
+                      : 'X-Burger Especial'
+                  }
                   autoFocus
                 />
               </div>
-              <div className="form-group" style={{ marginBottom: 12 }}>
-                <label className="form-label">Descrição (opcional)</label>
-                <input
-                  className="form-input"
-                  type="text"
-                  value={createForm.descricao}
-                  onChange={(e) => setCreateForm({ ...createForm, descricao: e.target.value })}
-                  placeholder="Pão, blend 160g, queijo..."
-                />
-              </div>
+              {createForm.tipoProduto === 'PRODUTO' && (
+                <div className="form-group" style={{ marginBottom: 12 }}>
+                  <label className="form-label">Descrição (opcional)</label>
+                  <input
+                    className="form-input"
+                    type="text"
+                    value={createForm.descricao}
+                    onChange={(e) => setCreateForm({ ...createForm, descricao: e.target.value })}
+                    placeholder="Pão, blend 160g, queijo..."
+                  />
+                </div>
+              )}
               <div className="form-group" style={{ marginBottom: 0 }}>
                 <label className="form-label">Preço de venda (R$)</label>
                 <input
@@ -451,6 +496,25 @@ export default function Produtos() {
                   placeholder="0,00"
                 />
               </div>
+              {createForm.tipoProduto === 'BEBIDA' && (
+                <div className="form-group" style={{ marginTop: 12, marginBottom: 0 }}>
+                  <label className="form-label">Custo de compra (R$)</label>
+                  <input
+                    className="form-input"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={createForm.custoDireto}
+                    onChange={(e) => setCreateForm({ ...createForm, custoDireto: e.target.value })}
+                    placeholder="0,00"
+                  />
+                </div>
+              )}
+              {createForm.tipoProduto === 'COMBO' && (
+                <div style={{ fontSize: 11.5, color: '#999', marginTop: 12 }}>
+                  A composição do combo será configurada em uma próxima etapa.
+                </div>
+              )}
               {createError && (
                 <div className="alert alert-red" style={{ marginTop: 12, marginBottom: 0 }}>
                   <div className="alert-msg clr-red">{createError}</div>
@@ -521,14 +585,33 @@ export default function Produtos() {
 
       <div className="section-title">Produtos e Fichas</div>
 
-      {totalAtivos === 0 ? (
+      {/* Abas por tipo de item vendido */}
+      <div className="modal-tabs" style={{ marginBottom: 14 }}>
+        {TIPOS_PRODUTO_TABS.map((t) => (
+          <button
+            key={t.value}
+            type="button"
+            className={'modal-tab' + (tipoTab === t.value ? ' active' : '')}
+            onClick={() => setTipoTab(t.value)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {produtosDaAba.length === 0 ? (
         <div className="empty-state">
-          Nenhum produto cadastrado. Use o botão “+ Novo produto” para cadastrar o primeiro e montar a ficha técnica.
+          {tipoTab === 'BEBIDA'
+            ? 'Nenhuma bebida cadastrada. Use “+ Novo produto” com o tipo Bebida para cadastrar a primeira.'
+            : tipoTab === 'COMBO'
+            ? 'Nenhum combo cadastrado. Use “+ Novo produto” com o tipo Combo para cadastrar o primeiro.'
+            : 'Nenhum produto cadastrado. Use o botão “+ Novo produto” para cadastrar o primeiro e montar a ficha técnica.'}
         </div>
       ) : (
         <div className="grid-3">
-          {produtos.map((p) => {
+          {produtosDaAba.map((p) => {
             const a = p.analise ?? {}
+            const tipoP = tipoDoProduto(p)
             // Badge = saúde GERAL da precificação (statusGeral); a linha "CMV do
             // produto" continua colorida pelo statusCmv (leitura isolada do CMV)
             const statusGeralProduto = a.statusGeral ?? a.statusCmv
@@ -543,7 +626,24 @@ export default function Produtos() {
               Number(a.diferencaPrecoSugerido) < 0
 
             const diagnosticos = []
-            if (semFichaProduto) {
+            if (tipoP === 'BEBIDA') {
+              diagnosticos.push({
+                texto: a.mensagemDiagnostico ?? 'Bebida de revenda.',
+                cls:
+                  statusGeralProduto === 'CRITICO'
+                    ? 'clr-red'
+                    : statusGeralProduto === 'ATENCAO'
+                    ? 'clr-yellow'
+                    : statusGeralProduto === 'SAUDAVEL'
+                    ? 'clr-green'
+                    : 'clr-muted'
+              })
+            } else if (tipoP === 'COMBO') {
+              diagnosticos.push({
+                texto: 'Monte o combo com produtos e bebidas na próxima etapa.',
+                cls: 'clr-muted'
+              })
+            } else if (semFichaProduto) {
               diagnosticos.push({ texto: 'Ficha técnica pendente', cls: 'clr-muted' })
             } else if (semPrecoProduto) {
               diagnosticos.push({ texto: 'Preço de venda pendente', cls: 'clr-muted' })
@@ -601,50 +701,80 @@ export default function Produtos() {
                         : brl(p.precoVenda)}
                     </div>
                   </div>
-                  <div style={{ flex: 1, minWidth: 86 }}>
-                    <div style={priceLabelStyle}>Sugerido</div>
-                    <div className="clr-blue" style={{ fontSize: 15, fontWeight: 600 }}>
-                      {a.precoSugerido === null || a.precoSugerido === undefined
-                        ? <span style={pricePendingStyle}>{semFichaProduto ? 'Sem ficha' : 'Pendente'}</span>
-                        : brl(a.precoSugerido)}
+                  {tipoP === 'PRODUTO' && (
+                    <div style={{ flex: 1, minWidth: 86 }}>
+                      <div style={priceLabelStyle}>Sugerido</div>
+                      <div className="clr-blue" style={{ fontSize: 15, fontWeight: 600 }}>
+                        {a.precoSugerido === null || a.precoSugerido === undefined
+                          ? <span style={pricePendingStyle}>{semFichaProduto ? 'Sem ficha' : 'Pendente'}</span>
+                          : brl(a.precoSugerido)}
+                      </div>
                     </div>
-                  </div>
-                  <div style={{ flex: 1, minWidth: 86 }}>
-                    <div style={priceLabelStyle}>iFood</div>
-                    <div className="clr-orange" style={{ fontSize: 15, fontWeight: 600 }}>
-                      {a.precoIfood === null || a.precoIfood === undefined
-                        ? <span style={pricePendingStyle}>{semFichaProduto ? 'Sem ficha' : 'Pendente'}</span>
-                        : brl(a.precoIfood)}
+                  )}
+                  {tipoP !== 'COMBO' && (
+                    <div style={{ flex: 1, minWidth: 86 }}>
+                      <div style={priceLabelStyle}>iFood</div>
+                      <div className="clr-orange" style={{ fontSize: 15, fontWeight: 600 }}>
+                        {a.precoIfood === null || a.precoIfood === undefined
+                          ? <span style={pricePendingStyle}>{tipoP === 'PRODUTO' && semFichaProduto ? 'Sem ficha' : 'Pendente'}</span>
+                          : brl(a.precoIfood)}
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
 
-                {/* Bloco 3 — Indicadores técnicos */}
+                {/* Bloco 3 — Indicadores (por tipo de item) */}
                 <div style={{ flex: 1 }}>
-                  <MetricRow label="CMV do produto">
-                    {a.cmvProdutoPercentual === null || a.cmvProdutoPercentual === undefined
-                      ? <span className="clr-muted">—</span>
-                      : <span className={cmvClass} style={{ fontWeight: 600 }}>{pct(a.cmvProdutoPercentual)}</span>}
-                  </MetricRow>
-                  <MetricRow label="CMV + custo embutido">
-                    {a.percentualTotalReal === null || a.percentualTotalReal === undefined
-                      ? <span className="clr-muted">—</span>
-                      : (
-                        <span className={classePercentualTotal(a.percentualTotalReal)} style={{ fontWeight: 600 }}>
-                          {pct(a.percentualTotalReal)}
-                        </span>
-                      )}
-                  </MetricRow>
-                  <MetricRow label="Custo total real">
-                    {semFichaProduto
-                      ? <span className="clr-muted">Não cadastrado</span>
-                      : brl(a.custoTotalReal ?? a.custoFichaTecnica)}
-                  </MetricRow>
-                  <MetricRow label="Lucro bruto real">
-                    {a.lucroBruto === null || a.lucroBruto === undefined
-                      ? <span className="clr-muted">—</span>
-                      : <span className={lucroPositivo ? 'clr-green' : 'clr-red'}>{brl(a.lucroBrutoReal ?? a.lucroBruto)}</span>}
-                  </MetricRow>
+                  {tipoP === 'BEBIDA' ? (
+                    <>
+                      <MetricRow label="Custo de compra">
+                        {a.produto?.custoDireto === null || a.produto?.custoDireto === undefined
+                          ? <span className="clr-muted">Não informado</span>
+                          : brl(a.produto.custoDireto)}
+                      </MetricRow>
+                      <MetricRow label="Lucro bruto">
+                        {a.lucroBrutoReal === null || a.lucroBrutoReal === undefined
+                          ? <span className="clr-muted">—</span>
+                          : <span className={Number(a.lucroBrutoReal) > 0 ? 'clr-green' : 'clr-red'}>{brl(a.lucroBrutoReal)}</span>}
+                      </MetricRow>
+                      <MetricRow label="Margem sobre venda">
+                        {a.margemRealPercentual === null || a.margemRealPercentual === undefined
+                          ? <span className="clr-muted">—</span>
+                          : <span style={{ fontWeight: 600 }}>{pct(a.margemRealPercentual)}</span>}
+                      </MetricRow>
+                    </>
+                  ) : tipoP === 'COMBO' ? (
+                    <MetricRow label="Composição">
+                      <span className="clr-muted">Pendente</span>
+                    </MetricRow>
+                  ) : (
+                    <>
+                      <MetricRow label="CMV do produto">
+                        {a.cmvProdutoPercentual === null || a.cmvProdutoPercentual === undefined
+                          ? <span className="clr-muted">—</span>
+                          : <span className={cmvClass} style={{ fontWeight: 600 }}>{pct(a.cmvProdutoPercentual)}</span>}
+                      </MetricRow>
+                      <MetricRow label="CMV + custo embutido">
+                        {a.percentualTotalReal === null || a.percentualTotalReal === undefined
+                          ? <span className="clr-muted">—</span>
+                          : (
+                            <span className={classePercentualTotal(a.percentualTotalReal)} style={{ fontWeight: 600 }}>
+                              {pct(a.percentualTotalReal)}
+                            </span>
+                          )}
+                      </MetricRow>
+                      <MetricRow label="Custo total real">
+                        {semFichaProduto
+                          ? <span className="clr-muted">Não cadastrado</span>
+                          : brl(a.custoTotalReal ?? a.custoFichaTecnica)}
+                      </MetricRow>
+                      <MetricRow label="Lucro bruto real">
+                        {a.lucroBruto === null || a.lucroBruto === undefined
+                          ? <span className="clr-muted">—</span>
+                          : <span className={lucroPositivo ? 'clr-green' : 'clr-red'}>{brl(a.lucroBrutoReal ?? a.lucroBruto)}</span>}
+                      </MetricRow>
+                    </>
+                  )}
                 </div>
 
                 {/* Bloco 4 — Diagnóstico */}
@@ -1017,7 +1147,13 @@ function FichaModal({ produtoId, onClose, onChanged }) {
           precoVenda:
             prod.precoVenda === null || prod.precoVenda === undefined
               ? ''
-              : String(Number(prod.precoVenda))
+              : String(Number(prod.precoVenda)),
+          // Preserva o tipo ao salvar (payloadFromForm envia tipoProduto)
+          tipoProduto: prod.tipoProduto ?? 'PRODUTO',
+          custoDireto:
+            prod.custoDireto === null || prod.custoDireto === undefined
+              ? ''
+              : String(Number(prod.custoDireto))
         })
         setLoading(false)
       })
@@ -1230,6 +1366,8 @@ function FichaModal({ produtoId, onClose, onChanged }) {
   // continua colorido pelo statusCmv
   const statusGeralModal = analise?.statusGeral ?? status
   const semFicha = status === 'SEM_FICHA'
+  // BEBIDA e COMBO usam corpo simplificado (sem ficha técnica/precificação por CMV)
+  const tipoModalProduto = produto?.tipoProduto ?? 'PRODUTO'
 
   const insumoSelecionado = insumos.find((x) => String(x.id) === formInsumoId)
   const insumoSelUnidade = insumoSelecionado
@@ -1290,6 +1428,123 @@ function FichaModal({ produtoId, onClose, onChanged }) {
               </div>
             </div>
           </div>
+        ) : tipoModalProduto !== 'PRODUTO' ? (
+          <>
+            {/* Corpo simplificado: bebida (revenda) e combo (composição futura) */}
+            <div className="section-title" style={{ marginTop: 0 }}>
+              {tipoModalProduto === 'BEBIDA' ? 'Dados da Bebida' : 'Dados do Combo'}
+            </div>
+            <div className="card">
+              <form onSubmit={handleSaveDados}>
+                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                  <div className="form-group" style={{ marginBottom: 0, flex: 2, minWidth: 200 }}>
+                    <label className="form-label">Nome</label>
+                    <input
+                      className="form-input"
+                      type="text"
+                      value={dadosForm.nome}
+                      onChange={(e) => setDadosForm({ ...dadosForm, nome: e.target.value })}
+                    />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 130 }}>
+                    <label className="form-label">Preço de venda (R$)</label>
+                    <input
+                      className="form-input"
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={dadosForm.precoVenda}
+                      onChange={(e) => setDadosForm({ ...dadosForm, precoVenda: e.target.value })}
+                    />
+                  </div>
+                  {tipoModalProduto === 'BEBIDA' && (
+                    <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 130 }}>
+                      <label className="form-label">Custo de compra (R$)</label>
+                      <input
+                        className="form-input"
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={dadosForm.custoDireto}
+                        onChange={(e) => setDadosForm({ ...dadosForm, custoDireto: e.target.value })}
+                      />
+                    </div>
+                  )}
+                  <button type="submit" className="btn btn-primary" disabled={dadosSaving}>
+                    {dadosSaving ? 'Salvando…' : 'Salvar dados'}
+                  </button>
+                </div>
+                {dadosError && (
+                  <div className="alert alert-red" style={{ marginTop: 12, marginBottom: 0 }}>
+                    <div className="alert-msg clr-red">{dadosError}</div>
+                  </div>
+                )}
+              </form>
+            </div>
+
+            {tipoModalProduto === 'BEBIDA' ? (
+              <>
+                <div className="section-title">Resumo da Revenda</div>
+                <div className="grid-4">
+                  <Card title="Preço de Venda" value={brl(analise?.precoVenda)} hint="Cadastrado na bebida" variant="brand" />
+                  <Card
+                    title="Custo de Compra"
+                    value={
+                      analise?.produto?.custoDireto === null || analise?.produto?.custoDireto === undefined
+                        ? '—'
+                        : brl(analise.produto.custoDireto)
+                    }
+                    hint="Custo de revenda"
+                  />
+                  <Card
+                    title="Lucro Bruto"
+                    value={
+                      analise?.lucroBrutoReal === null || analise?.lucroBrutoReal === undefined
+                        ? '—'
+                        : brl(analise.lucroBrutoReal)
+                    }
+                    hint="Preço − custo de compra"
+                    variant={analise?.lucroBrutoReal !== null && Number(analise?.lucroBrutoReal) > 0 ? 'success' : 'info'}
+                  />
+                  <Card
+                    title="Margem sobre Venda"
+                    value={pct(analise?.margemRealPercentual)}
+                    hint="Lucro / preço de venda"
+                    variant={
+                      statusGeralModal === 'SAUDAVEL' ? 'success'
+                      : statusGeralModal === 'ATENCAO' ? 'warn'
+                      : statusGeralModal === 'CRITICO' ? 'danger'
+                      : 'info'
+                    }
+                  />
+                </div>
+                {analise?.mensagemDiagnostico && (
+                  <div
+                    className={
+                      'alert ' +
+                      (statusGeralModal === 'CRITICO'
+                        ? 'alert-red'
+                        : statusGeralModal === 'ATENCAO'
+                        ? 'alert-yellow'
+                        : statusGeralModal === 'SAUDAVEL'
+                        ? 'alert-green'
+                        : 'alert-gray')
+                    }
+                    style={{ marginTop: 12 }}
+                  >
+                    <div className="alert-msg">{analise.mensagemDiagnostico}</div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="alert alert-gray" style={{ marginTop: 12 }}>
+                <div className="alert-msg">
+                  A composição do combo será configurada em uma próxima etapa. Monte o combo com
+                  produtos e bebidas já cadastrados quando essa fase estiver disponível.
+                </div>
+              </div>
+            )}
+          </>
         ) : (
           <>
             <div className="modal-tabs">

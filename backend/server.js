@@ -682,9 +682,11 @@ app.get('/api/produtos', async (req, res) => {
   }
 });
 
+const TIPOS_PRODUTO = ['PRODUTO', 'BEBIDA', 'COMBO'];
+
 app.post('/api/produtos', async (req, res) => {
   try {
-    const { nome, descricao, precoVenda } = req.body ?? {};
+    const { nome, descricao, precoVenda, tipoProduto, custoDireto } = req.body ?? {};
 
     if (typeof nome !== 'string' || nome.trim() === '') {
       return res.status(400).json({ error: 'nome é obrigatório' });
@@ -695,12 +697,26 @@ app.post('/api/produtos', async (req, res) => {
     if (Number(precoVenda) < 0) {
       return res.status(400).json({ error: 'precoVenda deve ser maior ou igual a zero' });
     }
+    const tipoFinal = tipoProduto === undefined || tipoProduto === null ? 'PRODUTO' : tipoProduto;
+    if (!TIPOS_PRODUTO.includes(tipoFinal)) {
+      return res.status(400).json({ error: 'tipoProduto deve ser PRODUTO, BEBIDA ou COMBO' });
+    }
+    if (custoDireto !== undefined && custoDireto !== null && custoDireto !== '') {
+      if (isNaN(Number(custoDireto)) || Number(custoDireto) < 0) {
+        return res.status(400).json({ error: 'custoDireto deve ser numérico e maior ou igual a zero' });
+      }
+    }
 
     const produto = await prisma.produto.create({
       data: {
         nome: nome.trim(),
         descricao: descricao ? String(descricao).trim() : null,
         precoVenda: Number(precoVenda),
+        tipoProduto: tipoFinal,
+        custoDireto:
+          custoDireto === undefined || custoDireto === null || custoDireto === ''
+            ? null
+            : Number(custoDireto),
         ativo: true
       }
     });
@@ -724,7 +740,7 @@ app.put('/api/produtos/:id', async (req, res) => {
       return res.status(404).json({ error: 'Produto não encontrado' });
     }
 
-    const { nome, descricao, precoVenda, ativo } = req.body ?? {};
+    const { nome, descricao, precoVenda, ativo, tipoProduto, custoDireto } = req.body ?? {};
     const data = {};
 
     if (nome !== undefined) {
@@ -732,6 +748,21 @@ app.put('/api/produtos/:id', async (req, res) => {
         return res.status(400).json({ error: 'nome inválido' });
       }
       data.nome = nome.trim();
+    }
+    if (tipoProduto !== undefined) {
+      if (!TIPOS_PRODUTO.includes(tipoProduto)) {
+        return res.status(400).json({ error: 'tipoProduto deve ser PRODUTO, BEBIDA ou COMBO' });
+      }
+      data.tipoProduto = tipoProduto;
+    }
+    if (custoDireto !== undefined) {
+      if (custoDireto === null || custoDireto === '') {
+        data.custoDireto = null;
+      } else if (isNaN(Number(custoDireto)) || Number(custoDireto) < 0) {
+        return res.status(400).json({ error: 'custoDireto deve ser numérico e maior ou igual a zero' });
+      } else {
+        data.custoDireto = Number(custoDireto);
+      }
     }
     if (descricao !== undefined) {
       data.descricao =
@@ -1294,10 +1325,128 @@ app.get('/api/produtos/:id/analise', async (req, res) => {
     const produtoOut = {
       id: produto.id,
       nome: produto.nome,
-      precoVenda: round2(precoVenda)
+      precoVenda: round2(precoVenda),
+      tipoProduto: produto.tipoProduto ?? 'PRODUTO',
+      custoDireto:
+        produto.custoDireto === null || produto.custoDireto === undefined
+          ? null
+          : round2(Number(produto.custoDireto))
     };
 
     const config = await getConfigPrecificacao();
+
+    // ===== BEBIDA: revenda simples — análise por lucro/margem, sem régua de
+    // CMV de produto próprio e sem exigir ficha técnica =====
+    if (produtoOut.tipoProduto === 'BEBIDA') {
+      const custoDireto = produtoOut.custoDireto;
+      const precificacaoBebida = computePrecificacao(
+        { custoComMargem: 0, custoEmbutido: 0 },
+        precoVenda,
+        config
+      );
+      let statusGeral;
+      let mensagemDiagnostico;
+      let lucroBrutoReal = null;
+      let margemRealPercentual = null;
+      let percentualTotalReal = null;
+      if (precoVenda === 0) {
+        statusGeral = 'SEM_PRECO';
+        mensagemDiagnostico = 'Bebida sem preço de venda.';
+      } else if (custoDireto === null) {
+        statusGeral = 'ATENCAO';
+        mensagemDiagnostico = 'Bebida sem custo de compra.';
+      } else {
+        lucroBrutoReal = precoVenda - custoDireto;
+        margemRealPercentual = (lucroBrutoReal / precoVenda) * 100;
+        percentualTotalReal = (custoDireto / precoVenda) * 100;
+        if (lucroBrutoReal <= 0) {
+          statusGeral = 'CRITICO';
+          mensagemDiagnostico = 'Bebida vendida sem lucro. Revise custo de compra e preço.';
+        } else if (margemRealPercentual < 20) {
+          statusGeral = 'ATENCAO';
+          mensagemDiagnostico = 'Margem da bebida abaixo de 20%. Avalie o preço de venda.';
+        } else {
+          statusGeral = 'SAUDAVEL';
+          mensagemDiagnostico = 'Margem de revenda saudável.';
+        }
+      }
+      return res.json({
+        produto: produtoOut,
+        precoVenda: round2(precoVenda),
+        custoFichaTecnica: 0,
+        custoComMargem: custoDireto === null ? 0 : round2(custoDireto),
+        custoEmbutido: 0,
+        custoTotalFicha: custoDireto === null ? 0 : round2(custoDireto),
+        custoProduto: custoDireto === null ? 0 : round2(custoDireto),
+        custoTotalReal: custoDireto === null ? 0 : round2(custoDireto),
+        cmvProdutoPercentual: null,
+        percentualTotalReal: percentualTotalReal === null ? null : round2(percentualTotalReal),
+        percentualCustoEmbutido: null,
+        lucroBrutoReal: lucroBrutoReal === null ? null : round2(lucroBrutoReal),
+        margemRealPercentual:
+          margemRealPercentual === null ? null : round2(margemRealPercentual),
+        alertaCustoTotal: null,
+        alertaCustoEmbutido: null,
+        lucroBruto: lucroBrutoReal === null ? null : round2(lucroBrutoReal),
+        cmvPercentual: percentualTotalReal === null ? null : round2(percentualTotalReal),
+        margemBrutaPercentual:
+          margemRealPercentual === null ? null : round2(margemRealPercentual),
+        statusCmv: statusGeral,
+        statusGeral,
+        mensagemDiagnostico,
+        ...precificacaoBebida,
+        precoSugerido: null,
+        diferencaPrecoSugerido: null,
+        diferencaPrecoIfoodVsVenda:
+          precificacaoBebida.precoIfood === null
+            ? null
+            : round2(precificacaoBebida.precoIfood - precoVenda),
+        mensagemPrecificacao:
+          'Bebida de revenda: análise por lucro bruto e margem, sem preço sugerido por CMV.'
+      });
+    }
+
+    // ===== COMBO: composição será configurada em fase futura =====
+    if (produtoOut.tipoProduto === 'COMBO') {
+      const precificacaoCombo = computePrecificacao(
+        { custoComMargem: 0, custoEmbutido: 0 },
+        precoVenda,
+        config
+      );
+      return res.json({
+        produto: produtoOut,
+        precoVenda: round2(precoVenda),
+        custoFichaTecnica: 0,
+        custoComMargem: 0,
+        custoEmbutido: 0,
+        custoTotalFicha: 0,
+        custoProduto: 0,
+        custoTotalReal: 0,
+        cmvProdutoPercentual: null,
+        percentualTotalReal: null,
+        percentualCustoEmbutido: null,
+        lucroBrutoReal: null,
+        margemRealPercentual: null,
+        alertaCustoTotal: null,
+        alertaCustoEmbutido: null,
+        lucroBruto: null,
+        cmvPercentual: null,
+        margemBrutaPercentual: null,
+        statusCmv: 'SEM_COMPOSICAO',
+        statusGeral: 'SEM_COMPOSICAO',
+        mensagemDiagnostico:
+          'Combo sem composição. Monte o combo com produtos e bebidas na próxima etapa.',
+        ...precificacaoCombo,
+        precoSugerido: null,
+        diferencaPrecoSugerido: null,
+        diferencaPrecoIfoodVsVenda:
+          precificacaoCombo.precoIfood === null
+            ? null
+            : round2(precificacaoCombo.precoIfood - precoVenda),
+        mensagemPrecificacao:
+          'A composição do combo será configurada em uma próxima etapa.'
+      });
+    }
 
     if (itens.length === 0) {
       const precificacaoVazia = computePrecificacao(

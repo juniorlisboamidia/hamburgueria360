@@ -93,6 +93,11 @@ model Produto {
   nome         String
   descricao    String?
   precoVenda   Decimal  @db.Decimal(12, 2)
+  // Tipo do item vendido: PRODUTO (montado, com ficha técnica), BEBIDA
+  // (revenda simples, custo direto) ou COMBO (composição em fase futura)
+  tipoProduto  String   @default("PRODUTO")
+  // Custo de compra para BEBIDA (revenda); PRODUTO usa ficha técnica
+  custoDireto  Decimal? @db.Decimal(12, 2)
   ativo        Boolean  @default(true)
   criadoEm     DateTime @default(now())
   atualizadoEm DateTime @updatedAt
