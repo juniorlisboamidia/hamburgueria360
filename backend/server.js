@@ -69,7 +69,14 @@ app.get('/api/insumos', async (req, res) => {
   try {
     const insumos = await prisma.insumo.findMany({
       where: { ativo: true },
-      orderBy: { nome: 'asc' }
+      orderBy: { nome: 'asc' },
+      // Resumo da receita própria: a ficha técnica usa modoRendimento/pesoPorcao
+      // para oferecer o uso por unidade/porção
+      include: {
+        receitaProducao: {
+          select: { modoRendimento: true, quantidadePorcoes: true, pesoPorcao: true }
+        }
+      }
     });
     res.json(insumos.map(insumoComUnidadeNormalizada));
   } catch (err) {
@@ -794,9 +801,32 @@ function defaultsUsoPorTipoInsumo(tipoInsumo) {
 // custoBruto = quantidadeBase × custoUnitario
 // (insumo em Kg: quantidade informada em gramas, convertida com /1000; em Und: direto)
 // custoAplicado = custoBruto / quantidadeAtendida (POR_EMBALAGEM e POR_PEDIDO)
+// Include padrão para itens da ficha técnica: o insumo + receita própria
+// (a receita é necessária para calcular itens em modo PORCAO)
+const FICHA_INSUMO_INCLUDE = { insumo: { include: { receitaProducao: true } } };
+
+// Custo de uma porção/unidade da receita própria, na unidade base do insumo.
+// Kg/L: pesoPorcao (g/ml) convertido para a base × custo unitário; Und: 1 porção
+// = 1 unidade. Retorna null quando não dá para calcular (sem receita/pesoPorcao).
+function custoPorPorcaoInsumo(insumo) {
+  const receita = insumo?.receitaProducao;
+  if (!receita) return null;
+  const ui = normalizeUnidade(insumo.unidade);
+  if (ui === 'Kg' || ui === 'L') {
+    const peso = Number(receita.pesoPorcao);
+    if (!Number.isFinite(peso) || peso <= 0) return null;
+    return (peso / 1000) * Number(insumo.custoUnitario);
+  }
+  return Number(insumo.custoUnitario);
+}
+
 function computeItemFicha(item) {
+  // PORCAO: quantidade = nº de porções/unidades da receita própria
+  // (1 coxinha de 25 g → 0,025 Kg × custo/Kg). BASE: comportamento original.
   const custoBruto =
-    quantidadeBase(item.quantidade, item.insumo.unidade) * Number(item.insumo.custoUnitario);
+    item.modoUsoQuantidade === 'PORCAO'
+      ? Number(item.quantidade) * (custoPorPorcaoInsumo(item.insumo) ?? 0)
+      : quantidadeBase(item.quantidade, item.insumo.unidade) * Number(item.insumo.custoUnitario);
   const qa =
     item.quantidadeAtendida === null || item.quantidadeAtendida === undefined
       ? null
@@ -823,7 +853,8 @@ function computeFichaTotals(itensRaw) {
     return {
       ...item,
       insumo: insumoComUnidadeNormalizada(item.insumo),
-      unidadeQuantidadeFicha: unidadeQuantidade(item.insumo?.unidade),
+      unidadeQuantidadeFicha:
+        item.modoUsoQuantidade === 'PORCAO' ? 'und' : unidadeQuantidade(item.insumo?.unidade),
       custoBruto,
       custoAplicado,
       custoItem: custoAplicado
@@ -875,7 +906,7 @@ app.get('/api/produtos/:produtoId/ficha-tecnica', async (req, res) => {
 
     const itensRaw = await prisma.fichaTecnicaItem.findMany({
       where: { produtoId },
-      include: { insumo: true },
+      include: FICHA_INSUMO_INCLUDE,
       orderBy: { id: 'asc' }
     });
 
@@ -901,7 +932,8 @@ app.post('/api/produtos/:produtoId/ficha-tecnica/itens', async (req, res) => {
       return res.status(400).json({ error: 'produtoId inválido' });
     }
 
-    const { insumoId, quantidade, tipoUso, formaRateio, quantidadeAtendida } = req.body ?? {};
+    const { insumoId, quantidade, tipoUso, formaRateio, quantidadeAtendida, modoUsoQuantidade } =
+      req.body ?? {};
 
     if (!Number.isInteger(Number(insumoId)) || Number(insumoId) <= 0) {
       return res.status(400).json({ error: 'insumoId inválido' });
@@ -918,9 +950,34 @@ app.post('/api/produtos/:produtoId/ficha-tecnica/itens', async (req, res) => {
       return res.status(404).json({ error: 'Produto não encontrado' });
     }
 
-    const insumo = await prisma.insumo.findUnique({ where: { id: Number(insumoId) } });
+    const insumo = await prisma.insumo.findUnique({
+      where: { id: Number(insumoId) },
+      include: { receitaProducao: true }
+    });
     if (!insumo || !insumo.ativo) {
       return res.status(404).json({ error: 'Insumo não encontrado' });
+    }
+
+    // Modo de uso da quantidade: PORCAO só vale para produção própria com
+    // receita em modo PORCOES (e pesoPorcao definido quando o insumo é Kg/L)
+    const modoUsoFinal = modoUsoQuantidade === 'PORCAO' ? 'PORCAO' : 'BASE';
+    if (modoUsoFinal === 'PORCAO') {
+      if (insumo.tipo !== 'PRODUCAO_PROPRIA') {
+        return res.status(400).json({
+          error: 'Uso por unidade/porção só está disponível para insumos de produção própria'
+        });
+      }
+      if (insumo.receitaProducao?.modoRendimento !== 'PORCOES') {
+        return res.status(400).json({
+          error:
+            'Uso por unidade/porção exige que a receita do insumo esteja no modo de rendimento por porções'
+        });
+      }
+      if (custoPorPorcaoInsumo(insumo) === null) {
+        return res.status(400).json({
+          error: 'Receita sem tamanho de porção definido para calcular o custo por unidade'
+        });
+      }
     }
 
     const defaults = defaultsUsoPorTipoInsumo(insumo.tipo);
@@ -949,12 +1006,13 @@ app.post('/api/produtos/:produtoId/ficha-tecnica/itens', async (req, res) => {
         produtoId,
         insumoId: Number(insumoId),
         quantidade: Number(quantidade),
+        modoUsoQuantidade: modoUsoFinal,
         tipoUso: merged.tipoUso,
         formaRateio: merged.formaRateio,
         quantidadeAtendida: merged.quantidadeAtendida,
         aplicarMargem: merged.aplicarMargem
       },
-      include: { insumo: true }
+      include: FICHA_INSUMO_INCLUDE
     });
 
     res.status(201).json({ ...item, ...computeItemFicha(item) });
@@ -1027,7 +1085,7 @@ app.put('/api/ficha-tecnica/itens/:id', async (req, res) => {
     const updated = await prisma.fichaTecnicaItem.update({
       where: { id },
       data,
-      include: { insumo: true }
+      include: FICHA_INSUMO_INCLUDE
     });
 
     res.json({ ...updated, ...computeItemFicha(updated) });
@@ -1227,7 +1285,7 @@ app.get('/api/produtos/:id/analise', async (req, res) => {
 
     const itens = await prisma.fichaTecnicaItem.findMany({
       where: { produtoId: id },
-      include: { insumo: true }
+      include: FICHA_INSUMO_INCLUDE
     });
 
     const precoVenda = Number(produto.precoVenda);
@@ -1952,7 +2010,7 @@ app.get('/api/ponto-equilibrio', async (req, res) => {
       }),
       prisma.produto.findMany({
         where: { ativo: true },
-        include: { fichaTecnica: { include: { insumo: true } } }
+        include: { fichaTecnica: { include: FICHA_INSUMO_INCLUDE } }
       }),
       prisma.custoVariavel.findMany({ where: { ativo: true } })
     ]);
@@ -2120,7 +2178,7 @@ app.get('/api/dashboard', async (req, res) => {
       }),
       prisma.produto.findMany({
         where: { ativo: true },
-        include: { fichaTecnica: { include: { insumo: true } } }
+        include: { fichaTecnica: { include: FICHA_INSUMO_INCLUDE } }
       }),
       prisma.custoVariavel.findMany({ where: { ativo: true } }),
       prisma.produto.count({ where: { ativo: true } }),

@@ -124,6 +124,11 @@ model FichaTecnicaItem {
   produtoId          Int
   insumoId           Int
   quantidade         Decimal          @db.Decimal(12, 4)
+  // Como interpretar `quantidade`: "BASE" = unidade base do insumo (Kg em g,
+  // L em ml, Und em und — comportamento original). "PORCAO" = unidades/porções
+  // da receita própria (1 = uma porção; custo = pesoPorcao × custo base).
+  // Null em itens antigos = BASE.
+  modoUsoQuantidade  String?          @default("BASE")
   tipoUso            TipoUsoFicha     @default(INGREDIENTE)
   formaRateio        FormaRateioFicha @default(POR_PRODUTO)
   quantidadeAtendida Decimal?         @db.Decimal(10, 3)

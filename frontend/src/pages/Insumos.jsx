@@ -1113,6 +1113,31 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
     ? custoPorcaoExibido(receita, insumo?.unidade)
     : null
 
+  // ===== Resumo no modo PORCOES: a leitura principal é o custo POR UNIDADE =====
+  // (custoTotal / quantidadePorcoes); o custo por Kg/L vira leitura técnica
+  const receitaEmPorcoes = receita?.modoRendimento === 'PORCOES'
+  const qtdPorcoesReceita = Number(receita?.quantidadePorcoes)
+  const pesoPorcaoReceita = Number(receita?.pesoPorcao)
+  const custoPorUnidadeReceita =
+    receitaEmPorcoes && qtdPorcoesReceita > 0 && Number(receita?.custoTotalReceita) > 0
+      ? Number(receita.custoTotalReceita) / qtdPorcoesReceita
+      : null
+  const unidadeMenorInsumo =
+    unidadeInsumoProduzido === 'Kg' ? 'g' : unidadeInsumoProduzido === 'L' ? 'ml' : 'und'
+  // Para insumo base Und o custo por unidade já é o próprio custo unitário:
+  // não duplica o card de custo por Kg/L
+  const mostraCustoBasePorcoes =
+    receitaEmPorcoes && (unidadeInsumoProduzido === 'Kg' || unidadeInsumoProduzido === 'L')
+  // Custo ATUAL da unidade: o que a ficha técnica usa hoje ao consumir por
+  // unidade (peso da porção × custo salvo no insumo; Und usa o custo direto)
+  const custoAtualUnidadeReceita = !receitaEmPorcoes
+    ? null
+    : unidadeInsumoProduzido === 'Kg' || unidadeInsumoProduzido === 'L'
+    ? pesoPorcaoReceita > 0
+      ? (pesoPorcaoReceita / 1000) * Number(insumo?.custoUnitario ?? 0)
+      : null
+    : Number(insumo?.custoUnitario ?? 0)
+
   return (
     <div className="modal-overlay">
       <div className="modal modal-card-large">
@@ -1513,9 +1538,10 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
               </form>
             </div>
 
-            {/* Seção 3 — Resumo do custo */}
+            {/* Seção 3 — Resumo do custo. No modo PORCOES a leitura principal é
+                o custo por unidade; o custo por Kg/L segue como leitura técnica */}
             <div className="section-title">Resumo do Custo</div>
-            <div className="grid-4">
+            <div className={mostraCustoBasePorcoes ? 'grid-5' : 'grid-4'}>
               <Card
                 title="Custo Total da Receita"
                 value={brl(receita?.custoTotalReceita ?? 0)}
@@ -1524,12 +1550,24 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
               />
               <Card
                 title="Rendimento"
-                value={temRendimento ? `${num(receita.rendimento)} ${unidadeRendimentoExibida}` : '—'}
+                value={
+                  !temRendimento
+                    ? '—'
+                    : receitaEmPorcoes && qtdPorcoesReceita > 0
+                    ? `${num(qtdPorcoesReceita)} unidades${
+                        mostraCustoBasePorcoes && pesoPorcaoReceita > 0
+                          ? ` de ${num(pesoPorcaoReceita)} ${unidadeMenorInsumo}`
+                          : ''
+                      }`
+                    : `${num(receita.rendimento)} ${unidadeRendimentoExibida}`
+                }
                 hint={
                   !temRendimento
                     ? 'Não informado'
                     : rendimentoIncompativel
                     ? `Incompatível com insumo em ${unidadeInsumoProduzido}`
+                    : receitaEmPorcoes && mostraCustoBasePorcoes
+                    ? `= ${num(receita.rendimento)} ${unidadeRendimentoExibida} = ${num(rendimentoBase)} ${unidadeInsumoProduzido}`
                     : rendimentoConvertido
                     ? `= ${num(rendimentoBase)} ${unidadeInsumoProduzido}`
                     : receita?.pesoPorcao
@@ -1537,26 +1575,63 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
                     : 'Sem porção definida'
                 }
               />
-              <Card
-                title="Custo Unitário Calculado"
-                value={custoUnitarioCalculado !== null ? brl(custoUnitarioCalculado) : '—'}
-                hint={
-                  rendimentoIncompativel
-                    ? 'Unidade do rendimento incompatível com o insumo'
-                    : custoUnitarioCalculado === null
-                    ? 'Informe o rendimento para calcular'
-                    : custoPorcaoResumo !== null
-                    ? `Por ${unidadeInsumoProduzido} · porção: ${num(receita.pesoPorcao)} ${receita.unidadePorcao ?? ''} = ${brl(custoPorcaoResumo)}`
-                    : `Por ${unidadeInsumoProduzido}`
-                }
-                variant={custoUnitarioCalculado !== null ? 'success' : 'info'}
-              />
-              <Card
-                title="Custo Atual do Insumo"
-                value={brl(insumo?.custoUnitario)}
-                hint={`Por ${insumo?.unidade ?? '—'} (em uso nas fichas)`}
-                variant="info"
-              />
+              {!receitaEmPorcoes ? (
+                <>
+                  <Card
+                    title="Custo Unitário Calculado"
+                    value={custoUnitarioCalculado !== null ? brl(custoUnitarioCalculado) : '—'}
+                    hint={
+                      rendimentoIncompativel
+                        ? 'Unidade do rendimento incompatível com o insumo'
+                        : custoUnitarioCalculado === null
+                        ? 'Informe o rendimento para calcular'
+                        : custoPorcaoResumo !== null
+                        ? `Por ${unidadeInsumoProduzido} · porção: ${num(receita.pesoPorcao)} ${receita.unidadePorcao ?? ''} = ${brl(custoPorcaoResumo)}`
+                        : `Por ${unidadeInsumoProduzido}`
+                    }
+                    variant={custoUnitarioCalculado !== null ? 'success' : 'info'}
+                  />
+                  <Card
+                    title="Custo Atual do Insumo"
+                    value={brl(insumo?.custoUnitario)}
+                    hint={`Por ${insumo?.unidade ?? '—'} (em uso nas fichas)`}
+                    variant="info"
+                  />
+                </>
+              ) : (
+                <>
+                  {/* Leitura operacional: a unidade/porção é o valor principal */}
+                  <Card
+                    title="Custo da Unidade"
+                    value={custoPorUnidadeReceita !== null ? brl(custoPorUnidadeReceita) : '—'}
+                    hint={
+                      custoPorUnidadeReceita === null
+                        ? 'Informe ingredientes e quantidade de unidades'
+                        : mostraCustoBasePorcoes && pesoPorcaoReceita > 0
+                        ? `Por unidade de ${num(pesoPorcaoReceita)} ${unidadeMenorInsumo}`
+                        : 'Por unidade'
+                    }
+                    variant="success"
+                  />
+                  <Card
+                    title="Custo Atual da Unidade"
+                    value={custoAtualUnidadeReceita !== null ? brl(custoAtualUnidadeReceita) : '—'}
+                    hint="Usado na ficha por unidade"
+                    variant="info"
+                  />
+                  {mostraCustoBasePorcoes && (
+                    <Card
+                      title={unidadeInsumoProduzido === 'Kg' ? 'Referência por Kg' : 'Referência por Litro'}
+                      value={brl(insumo?.custoUnitario)}
+                      hint={
+                        unidadeInsumoProduzido === 'Kg'
+                          ? 'Usado quando consumir por peso'
+                          : 'Usado quando consumir por volume'
+                      }
+                    />
+                  )}
+                </>
+              )}
             </div>
 
             {rendimentoIncompativel && (

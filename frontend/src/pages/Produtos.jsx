@@ -55,6 +55,27 @@ function classePercentualTotal(p) {
   return 'clr-green'
 }
 
+// Produção própria com receita em modo PORCOES pode ser usada na ficha por
+// unidade/porção (Kg/L exigem pesoPorcao definido; Und usa a própria unidade)
+function insumoPermitePorcao(insumo) {
+  if (!insumo || insumo.tipo !== 'PRODUCAO_PROPRIA') return false
+  const receita = insumo.receitaProducao
+  if (!receita || receita.modoRendimento !== 'PORCOES') return false
+  const u = unidadeNormalizada(insumo.unidade)
+  if (u === 'Kg' || u === 'L') return Number(receita.pesoPorcao) > 0
+  return true
+}
+
+// Custo de 1 unidade/porção do insumo de produção própria (na ficha técnica)
+function custoPorUnidadePorcao(insumo) {
+  if (!insumoPermitePorcao(insumo)) return null
+  const u = unidadeNormalizada(insumo.unidade)
+  if (u === 'Kg' || u === 'L') {
+    return (Number(insumo.receitaProducao.pesoPorcao) / 1000) * Number(insumo.custoUnitario)
+  }
+  return Number(insumo.custoUnitario)
+}
+
 // Alertas informativos da ficha técnica (heurísticas de revisão — não bloqueiam nada)
 function buildAlertasFicha(analise, itens) {
   const alertas = []
@@ -84,6 +105,14 @@ function buildAlertasFicha(analise, itens) {
   for (const item of itens ?? []) {
     const nome = item.insumo?.nome ?? 'Insumo'
     const qtd = Number(item.quantidade)
+    // Itens usados por unidade/porção não entram nas heurísticas de g/ml:
+    // a quantidade deles é em unidades (1 coxinha), não em gramas
+    if (item.modoUsoQuantidade === 'PORCAO') {
+      if (qtd > 10) {
+        alertas.push(`Quantidade alta de unidades/porções: ${nome} — ${num(qtd)} und.`)
+      }
+      continue
+    }
     const unidadeItem = unidadeNormalizada(item.insumo?.unidade)
     if (unidadeItem === 'Kg') {
       if (qtd < 1) {
@@ -945,6 +974,7 @@ function FichaModal({ produtoId, onClose, onChanged }) {
   const [formTipoUso, setFormTipoUso] = useState('INGREDIENTE')
   const [formRateio, setFormRateio] = useState('POR_PRODUTO')
   const [formAtendida, setFormAtendida] = useState('')
+  const [formModoUso, setFormModoUso] = useState('BASE')
   const [itemError, setItemError] = useState(null)
   const [itemSubmitting, setItemSubmitting] = useState(false)
 
@@ -1038,6 +1068,9 @@ function FichaModal({ produtoId, onClose, onChanged }) {
     const ins = insumos.find((x) => String(x.id) === value)
     if (ins) {
       setFormTipoUso(sugestaoUso(ins.tipo))
+      // Produção própria com receita por porções entra por padrão como
+      // "Por unidade" (1 = uma porção da receita); demais insumos usam a base
+      setFormModoUso(insumoPermitePorcao(ins) ? 'PORCAO' : 'BASE')
     }
   }
 
@@ -1047,6 +1080,7 @@ function FichaModal({ produtoId, onClose, onChanged }) {
     setFormTipoUso('INGREDIENTE')
     setFormRateio('POR_PRODUTO')
     setFormAtendida('')
+    setFormModoUso('BASE')
   }
 
   function openAddItemForm() {
@@ -1090,6 +1124,11 @@ function FichaModal({ produtoId, onClose, onChanged }) {
       .post(`/produtos/${produtoId}/ficha-tecnica/itens`, {
         insumoId: Number(formInsumoId),
         quantidade: q,
+        modoUsoQuantidade:
+          insumoPermitePorcao(insumos.find((x) => String(x.id) === formInsumoId)) &&
+          formModoUso === 'PORCAO'
+            ? 'PORCAO'
+            : 'BASE',
         tipoUso: formTipoUso,
         formaRateio: formRateio,
         quantidadeAtendida: formRateio === 'POR_PRODUTO' ? null : Number(formAtendida),
@@ -1195,6 +1234,12 @@ function FichaModal({ produtoId, onClose, onChanged }) {
   const insumoSelecionado = insumos.find((x) => String(x.id) === formInsumoId)
   const insumoSelUnidade = insumoSelecionado
     ? unidadeNormalizada(insumoSelecionado.unidade)
+    : null
+  const selPermitePorcao = insumoPermitePorcao(insumoSelecionado)
+  const usandoPorcao = selPermitePorcao && formModoUso === 'PORCAO'
+  const selCustoPorUnidade = selPermitePorcao ? custoPorUnidadePorcao(insumoSelecionado) : null
+  const selPesoPorcao = selPermitePorcao
+    ? Number(insumoSelecionado.receitaProducao?.pesoPorcao)
     : null
 
   const alertasFicha = loading || error ? [] : buildAlertasFicha(analise, itens)
@@ -1616,9 +1661,30 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                       placeholder="Digite para buscar o insumo..."
                     />
                   </div>
+                  {selPermitePorcao && (
+                    <div className="form-group" style={{ marginBottom: 0, flex: 1, minWidth: 130 }}>
+                      <label className="form-label">Modo de uso</label>
+                      <select
+                        className="form-input"
+                        value={formModoUso}
+                        onChange={(e) => setFormModoUso(e.target.value)}
+                      >
+                        <option value="PORCAO">Por unidade</option>
+                        <option value="BASE">
+                          {insumoSelUnidade === 'Kg'
+                            ? 'Por peso (g)'
+                            : insumoSelUnidade === 'L'
+                            ? 'Por volume (ml)'
+                            : 'Por unidade base'}
+                        </option>
+                      </select>
+                    </div>
+                  )}
                   <div className="form-group" style={{ marginBottom: 0, flex: 0.8, minWidth: 100 }}>
                     <label className="form-label">
-                      {insumoSelUnidade === 'Kg'
+                      {usandoPorcao
+                        ? 'Quantidade (und)'
+                        : insumoSelUnidade === 'Kg'
                         ? 'Quantidade (g)'
                         : insumoSelUnidade === 'L'
                         ? 'Quantidade (ml)'
@@ -1634,7 +1700,9 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                       value={formQty}
                       onChange={(e) => setFormQty(e.target.value)}
                       placeholder={
-                        insumoSelUnidade === 'Kg'
+                        usandoPorcao
+                          ? 'Ex.: 1'
+                          : insumoSelUnidade === 'Kg'
                           ? 'Ex.: 120'
                           : insumoSelUnidade === 'L'
                           ? 'Ex.: 300'
@@ -1700,20 +1768,32 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                     </button>
                   </div>
                 </div>
-                {insumoSelUnidade === 'Kg' && (
+                {usandoPorcao ? (
                   <div style={{ fontSize: 11.5, color: '#999', marginTop: 8 }}>
-                    Este insumo é cadastrado por kg. Informe aqui a quantidade em gramas.
+                    {insumoSelUnidade === 'Kg' || insumoSelUnidade === 'L'
+                      ? `Cada unidade equivale a ${num(selPesoPorcao)} ${
+                          insumoSelUnidade === 'Kg' ? 'g' : 'ml'
+                        } e custa ${brl(selCustoPorUnidade)}.`
+                      : `Cada unidade custa ${brl(selCustoPorUnidade)}.`}
                   </div>
-                )}
-                {insumoSelUnidade === 'L' && (
-                  <div style={{ fontSize: 11.5, color: '#999', marginTop: 8 }}>
-                    Este insumo é cadastrado por litro. Informe aqui a quantidade em ml.
-                  </div>
-                )}
-                {insumoSelUnidade === 'Und' && (
-                  <div style={{ fontSize: 11.5, color: '#999', marginTop: 8 }}>
-                    Este insumo é cadastrado por unidade. Informe aqui a quantidade de unidades.
-                  </div>
+                ) : (
+                  <>
+                    {insumoSelUnidade === 'Kg' && (
+                      <div style={{ fontSize: 11.5, color: '#999', marginTop: 8 }}>
+                        Este insumo é cadastrado por kg. Informe aqui a quantidade em gramas.
+                      </div>
+                    )}
+                    {insumoSelUnidade === 'L' && (
+                      <div style={{ fontSize: 11.5, color: '#999', marginTop: 8 }}>
+                        Este insumo é cadastrado por litro. Informe aqui a quantidade em ml.
+                      </div>
+                    )}
+                    {insumoSelUnidade === 'Und' && (
+                      <div style={{ fontSize: 11.5, color: '#999', marginTop: 8 }}>
+                        Este insumo é cadastrado por unidade. Informe aqui a quantidade de unidades.
+                      </div>
+                    )}
+                  </>
                 )}
                 {itemError && (
                   <div className="alert alert-red" style={{ marginTop: 12, marginBottom: 0 }}>
