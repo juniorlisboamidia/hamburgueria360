@@ -1895,6 +1895,106 @@ app.get('/api/custos-fixos', async (req, res) => {
   }
 });
 
+// Encargos de colaborador CLT (estimativa gerencial, não folha oficial):
+// 13º mensal = base/12; férias mensal = (base/12) × 4/3 (provisão + 1/3);
+// FGTS = 8% da base. Total mensal = base + 13º + férias + FGTS.
+const TIPOS_CUSTO_FIXO = ['GERAL', 'COLABORADOR'];
+const TIPOS_COLABORADOR = ['CLT', 'FREELANCER', 'OUTRO', 'PJ', 'DIARISTA'];
+
+function totalMensalColaboradorClt(salarioBase) {
+  const s = Number(salarioBase);
+  const decimo = s / 12;
+  const ferias = (s / 12) * (4 / 3);
+  const fgts = s * 0.08;
+  return Number((s + decimo + ferias + fgts).toFixed(2));
+}
+
+// Valida e resolve os campos de colaborador/motoboy de um payload de custo fixo.
+// Quando há cálculo automático (encargos CLT ou diária × quantidade × dias),
+// o valorMensal efetivo É o total calculado (fonte única usada por dashboard/PE).
+function resolveCamposColaborador(body) {
+  const { tipoCusto, tipoColaborador, salarioBase, calcularEncargos, valorDiaria, quantidade, dias } =
+    body ?? {};
+  const tipoCustoFinal =
+    tipoCusto === undefined || tipoCusto === null
+      ? 'GERAL'
+      : TIPOS_CUSTO_FIXO.includes(tipoCusto)
+      ? tipoCusto
+      : null;
+  if (tipoCustoFinal === null) {
+    return { error: 'tipoCusto deve ser GERAL ou COLABORADOR' };
+  }
+  if (tipoCustoFinal === 'GERAL') {
+    return {
+      campos: {
+        tipoCusto: 'GERAL',
+        tipoColaborador: null,
+        salarioBase: null,
+        calcularEncargos: false,
+        valorDiaria: null,
+        quantidade: null,
+        dias: null
+      },
+      valorMensalCalculado: null
+    };
+  }
+  const tipoColabFinal =
+    tipoColaborador === undefined || tipoColaborador === null
+      ? 'OUTRO'
+      : TIPOS_COLABORADOR.includes(tipoColaborador)
+      ? tipoColaborador
+      : null;
+  if (tipoColabFinal === null) {
+    return { error: 'tipoColaborador deve ser CLT, FREELANCER, OUTRO, PJ ou DIARISTA' };
+  }
+  const numOpcional = (v, nome) => {
+    if (v === undefined || v === null || v === '') return { valor: null };
+    if (isNaN(Number(v)) || Number(v) < 0) {
+      return { error: `${nome} deve ser numérico e maior ou igual a zero` };
+    }
+    return { valor: Number(v) };
+  };
+  const sb = numOpcional(salarioBase, 'salarioBase');
+  if (sb.error) return { error: sb.error };
+  const vd = numOpcional(valorDiaria, 'valorDiaria');
+  if (vd.error) return { error: vd.error };
+  const qt = numOpcional(quantidade, 'quantidade');
+  if (qt.error) return { error: qt.error };
+  const di = numOpcional(dias, 'dias');
+  if (di.error) return { error: di.error };
+
+  const encargosAtivos = calcularEncargos === true && tipoColabFinal === 'CLT';
+  if (encargosAtivos && !(sb.valor > 0)) {
+    return { error: 'salarioBase é obrigatório e deve ser maior que zero para calcular encargos' };
+  }
+
+  let valorMensalCalculado = null;
+  if (encargosAtivos) {
+    valorMensalCalculado = totalMensalColaboradorClt(sb.valor);
+  } else if (tipoColabFinal === 'DIARISTA') {
+    if (!(vd.valor > 0) || !(qt.valor > 0) || !(di.valor > 0)) {
+      return {
+        error: 'valorDiaria, quantidade e dias são obrigatórios e maiores que zero para diarista'
+      };
+    }
+    valorMensalCalculado = Number((vd.valor * qt.valor * di.valor).toFixed(2));
+  }
+
+  const ehDiarista = tipoColabFinal === 'DIARISTA';
+  return {
+    campos: {
+      tipoCusto: 'COLABORADOR',
+      tipoColaborador: tipoColabFinal,
+      salarioBase: sb.valor,
+      calcularEncargos: encargosAtivos,
+      valorDiaria: ehDiarista ? vd.valor : null,
+      quantidade: ehDiarista ? qt.valor : null,
+      dias: ehDiarista ? di.valor : null
+    },
+    valorMensalCalculado
+  };
+}
+
 app.post('/api/custos-fixos', async (req, res) => {
   try {
     const { nome, valorMensal, tipo, observacao } = req.body ?? {};
@@ -1902,19 +2002,31 @@ app.post('/api/custos-fixos', async (req, res) => {
     if (typeof nome !== 'string' || nome.trim() === '') {
       return res.status(400).json({ error: 'nome é obrigatório' });
     }
-    if (valorMensal === undefined || valorMensal === null || isNaN(Number(valorMensal))) {
-      return res.status(400).json({ error: 'valorMensal é obrigatório e deve ser numérico' });
+    const colaborador = resolveCamposColaborador(req.body);
+    if (colaborador.error) {
+      return res.status(400).json({ error: colaborador.error });
     }
-    if (Number(valorMensal) < 0) {
-      return res.status(400).json({ error: 'valorMensal deve ser maior ou igual a zero' });
+    // Com encargos automáticos o valor mensal vem do cálculo; sem, é obrigatório
+    let valorMensalFinal;
+    if (colaborador.valorMensalCalculado !== null) {
+      valorMensalFinal = colaborador.valorMensalCalculado;
+    } else {
+      if (valorMensal === undefined || valorMensal === null || isNaN(Number(valorMensal))) {
+        return res.status(400).json({ error: 'valorMensal é obrigatório e deve ser numérico' });
+      }
+      if (Number(valorMensal) < 0) {
+        return res.status(400).json({ error: 'valorMensal deve ser maior ou igual a zero' });
+      }
+      valorMensalFinal = Number(valorMensal);
     }
 
     const custo = await prisma.custoFixo.create({
       data: {
         nome: nome.trim(),
-        valorMensal: Number(valorMensal),
+        valorMensal: valorMensalFinal,
         tipo: tipo ? String(tipo).trim() : null,
         observacao: observacao ? String(observacao).trim() : null,
+        ...colaborador.campos,
         ativo: true
       }
     });
@@ -1938,7 +2050,7 @@ app.put('/api/custos-fixos/:id', async (req, res) => {
       return res.status(404).json({ error: 'Custo fixo não encontrado' });
     }
 
-    const { nome, valorMensal, tipo, observacao, ativo } = req.body ?? {};
+    const { nome, valorMensal, tipo, observacao, ativo, tipoCusto } = req.body ?? {};
     const data = {};
 
     if (nome !== undefined) {
@@ -1962,6 +2074,18 @@ app.put('/api/custos-fixos/:id', async (req, res) => {
     if (observacao !== undefined) {
       data.observacao =
         observacao === null || observacao === '' ? null : String(observacao).trim();
+    }
+    // Campos de colaborador: quando o payload traz tipoCusto, resolve o conjunto
+    // inteiro (e o valorMensal vira o total calculado se encargos estiverem ativos)
+    if (tipoCusto !== undefined) {
+      const colaborador = resolveCamposColaborador(req.body);
+      if (colaborador.error) {
+        return res.status(400).json({ error: colaborador.error });
+      }
+      Object.assign(data, colaborador.campos);
+      if (colaborador.valorMensalCalculado !== null) {
+        data.valorMensal = colaborador.valorMensalCalculado;
+      }
     }
     if (ativo !== undefined) {
       if (typeof ativo !== 'boolean') {

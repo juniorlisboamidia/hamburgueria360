@@ -128,6 +128,9 @@ a { text-decoration: none; color: inherit; }
   justify-content: center;
   z-index: 50;
   padding: 20px;
+  /* Modais mais altos que a viewport rolam dentro do overlay (o topo nunca
+     fica inalcançável por causa da centralização flex) */
+  overflow-y: auto;
 }
 .modal {
   background: #fff;
@@ -136,6 +139,7 @@ a { text-decoration: none; color: inherit; }
   width: 100%;
   max-width: 460px;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.18);
+  margin: auto;
 }
 .modal-title {
   font-size: 15px;
@@ -372,6 +376,7 @@ a { text-decoration: none; color: inherit; }
   justify-content: center;
   z-index: 80;
   padding: 20px;
+  overflow-y: auto;
 }
 .confirm-dialog {
   background: #fff;
@@ -381,6 +386,7 @@ a { text-decoration: none; color: inherit; }
   max-width: 400px;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.22);
   animation: toast-in 0.18s ease-out;
+  margin: auto;
 }
 .confirm-title { font-size: 14.5px; font-weight: 600; color: #111; margin-bottom: 8px; }
 .confirm-message { font-size: 13px; color: #444; line-height: 1.5; }

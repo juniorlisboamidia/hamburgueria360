@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import api from '../services/api'
 import Card from '../components/Card'
 import ConfirmDialog from '../components/ConfirmDialog'
+import Toast from '../components/Toast'
 
 const brlFormatter = new Intl.NumberFormat('pt-BR', {
   style: 'currency',
@@ -19,10 +20,11 @@ function pct(value) {
 
 // ===== Custos fixos =====
 
-// Grupos padronizados de custo fixo, na ordem fixa de exibição da grade
+// Grupos padronizados de custo fixo, na ordem fixa de exibição da grade.
+// "Colaboradores" = equipe fixa/CLT; "Freelancer" = equipe eventual.
 const GRUPOS_FIXOS_PADRAO = [
   'Custos de funcionamento',
-  'Mão de obra',
+  'Colaboradores',
   'Motoboys',
   'Marketing',
   'Alimentação',
@@ -40,9 +42,47 @@ const MAPA_CATEGORIA_LEGADA = {
   'Contas': 'Custos de funcionamento',
   'Sistemas': 'Custos de funcionamento',
   'Manutenção': 'Custos de funcionamento',
-  'Salários': 'Mão de obra',
+  'Salários': 'Colaboradores',
+  'Salários CLT': 'Colaboradores',
+  'Mão de obra': 'Colaboradores',
+  'Salários Freelancer': 'Freelancer',
   'Freelancers': 'Freelancer',
   'Outros': 'Custos gerais'
+}
+
+// Encargos de colaborador CLT (estimativa gerencial, espelhando o backend):
+// 13º = base/12 · férias = (base/12) × 4/3 · FGTS = 8% da base
+function encargosClt(salarioBase) {
+  const s = Number(salarioBase)
+  if (!Number.isFinite(s) || s <= 0) return null
+  const decimo = s / 12
+  const ferias = (s / 12) * (4 / 3)
+  const fgts = s * 0.08
+  return { decimo, ferias, fgts, total: s + decimo + ferias + fgts }
+}
+
+// Tipos de pessoa por grupo especial: Colaboradores (equipe fixa) e
+// Motoboys (entregadores, com diarista calculado por diária × qtd × dias)
+const TIPOS_COLABORADOR = [
+  { value: 'CLT', label: 'CLT' },
+  { value: 'FREELANCER', label: 'Freelancer' },
+  { value: 'OUTRO', label: 'Outro' }
+]
+const TIPOS_MOTOBOY = [
+  { value: 'CLT', label: 'CLT' },
+  { value: 'PJ', label: 'PJ' },
+  { value: 'DIARISTA', label: 'Diarista' }
+]
+const GRUPOS_ESPECIAIS = ['Colaboradores', 'Motoboys']
+function tiposPessoaDoGrupo(categoria) {
+  return categoria === 'Motoboys' ? TIPOS_MOTOBOY : TIPOS_COLABORADOR
+}
+function totalDiarista(form) {
+  const v = Number(form.valorDiaria)
+  const q = Number(form.quantidade)
+  const d = Number(form.dias)
+  if (!(v > 0) || !(q > 0) || !(d > 0)) return null
+  return v * q * d
 }
 
 function categoriaCanonicaFixo(tipo) {
@@ -52,12 +92,48 @@ function categoriaCanonicaFixo(tipo) {
   return MAPA_CATEGORIA_LEGADA[t] ?? 'Custos gerais'
 }
 
-const FIXO_BLANK = { nome: '', valorMensal: '', tipo: '', observacao: '' }
+const FIXO_BLANK = {
+  nome: '',
+  valorMensal: '',
+  tipo: '',
+  observacao: '',
+  tipoCusto: 'GERAL',
+  tipoColaborador: 'CLT',
+  salarioBase: '',
+  calcularEncargos: true,
+  valorDiaria: '',
+  quantidade: '',
+  dias: ''
+}
 
-function validateFixo({ nome, valorMensal }) {
-  if (!nome || !nome.trim()) return 'nome é obrigatório'
-  const v = Number(valorMensal)
-  if (valorMensal === '' || !Number.isFinite(v)) {
+// O modo colaborador/motoboy só vale dentro dos grupos especiais
+function ehColaboradorForm(form) {
+  return GRUPOS_ESPECIAIS.includes(form.tipo) && form.tipoCusto === 'COLABORADOR'
+}
+function encargosAtivosForm(form) {
+  return ehColaboradorForm(form) && form.tipoColaborador === 'CLT' && form.calcularEncargos
+}
+function diaristaForm(form) {
+  return ehColaboradorForm(form) && form.tipoColaborador === 'DIARISTA'
+}
+
+function validateFixo(form) {
+  if (!form.nome || !form.nome.trim()) return 'nome é obrigatório'
+  if (encargosAtivosForm(form)) {
+    const s = Number(form.salarioBase)
+    if (form.salarioBase === '' || !Number.isFinite(s) || s <= 0) {
+      return 'salário base é obrigatório e deve ser maior que zero'
+    }
+    return null
+  }
+  if (diaristaForm(form)) {
+    if (totalDiarista(form) === null) {
+      return 'valor da diária, quantidade e dias são obrigatórios e maiores que zero'
+    }
+    return null
+  }
+  const v = Number(form.valorMensal)
+  if (form.valorMensal === '' || !Number.isFinite(v)) {
     return 'valor mensal é obrigatório e deve ser numérico'
   }
   if (v < 0) return 'valor mensal deve ser maior ou igual a zero'
@@ -65,11 +141,27 @@ function validateFixo({ nome, valorMensal }) {
 }
 
 function payloadFixo(form) {
+  const colaborador = ehColaboradorForm(form)
+  const encargos = encargosAtivosForm(form)
+  const diarista = diaristaForm(form)
   return {
     nome: form.nome.trim(),
-    valorMensal: Number(form.valorMensal),
+    // Com cálculo automático (encargos ou diária) o backend recalcula e grava
+    // o total; o valor enviado aqui é só o espelho do preview
+    valorMensal: encargos
+      ? Number((encargosClt(form.salarioBase)?.total ?? 0).toFixed(2))
+      : diarista
+      ? Number((totalDiarista(form) ?? 0).toFixed(2))
+      : Number(form.valorMensal),
     tipo: form.tipo.trim() === '' ? null : form.tipo.trim(),
-    observacao: form.observacao.trim() === '' ? null : form.observacao.trim()
+    observacao: form.observacao.trim() === '' ? null : form.observacao.trim(),
+    tipoCusto: colaborador ? 'COLABORADOR' : 'GERAL',
+    tipoColaborador: colaborador ? form.tipoColaborador : null,
+    salarioBase: colaborador && form.salarioBase !== '' ? Number(form.salarioBase) : null,
+    calcularEncargos: encargos,
+    valorDiaria: diarista ? Number(form.valorDiaria) : null,
+    quantidade: diarista ? Number(form.quantidade) : null,
+    dias: diarista ? Number(form.dias) : null
   }
 }
 
@@ -166,7 +258,7 @@ export default function Custos() {
   const [variaveis, setVariaveis] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const [feedback, setFeedback] = useState(null)
+  const [toast, setToast] = useState(null)
 
   // Criação (modais)
   const [fixoModalOpen, setFixoModalOpen] = useState(false)
@@ -195,7 +287,7 @@ export default function Custos() {
   const [excluindoFixo, setExcluindoFixo] = useState(false)
   const [varParaExcluir, setVarParaExcluir] = useState(null)
   const [excluindoVar, setExcluindoVar] = useState(false)
-  const [deleteError, setDeleteError] = useState(null)
+  
 
   function load() {
     setLoading(true)
@@ -230,12 +322,16 @@ export default function Custos() {
 
   // ===== Custos fixos: criar / editar / desativar =====
 
-  // Criação contextual: o "+ Novo custo" de cada bloco abre o modal com a
-  // categoria do grupo já pré-selecionada (o botão do topo abre em branco)
+  // Criação contextual: o "+ Novo custo" de cada bloco abre o modal já com a
+  // categoria aplicada (sem campo de categoria/observação no formulário).
+  // Grupos especiais entram direto no modo colaborador/motoboy.
   function openFixoModal(categoria = '') {
-    setFixoForm({ ...FIXO_BLANK, tipo: categoria })
+    setFixoForm({
+      ...FIXO_BLANK,
+      tipo: categoria,
+      tipoCusto: GRUPOS_ESPECIAIS.includes(categoria) ? 'COLABORADOR' : 'GERAL'
+    })
     setFixoError(null)
-    setFeedback(null)
     setFixoModalOpen(true)
   }
 
@@ -249,7 +345,7 @@ export default function Custos() {
       .post('/custos-fixos', payloadFixo(fixoForm))
       .then(() => {
         setFixoModalOpen(false)
-        setFeedback('Custo fixo criado com sucesso.')
+        setToast({ message: 'Custo fixo criado com sucesso.', type: 'success' })
         return refresh()
       })
       .catch((e) =>
@@ -266,7 +362,19 @@ export default function Custos() {
       // Categoria legada vem pré-mapeada para o grupo padronizado: salvar a
       // edição normaliza o dado sem migration
       tipo: (c.tipo ?? '').trim() === '' ? '' : categoriaCanonicaFixo(c.tipo),
-      observacao: c.observacao ?? ''
+      observacao: c.observacao ?? '',
+      tipoCusto: c.tipoCusto === 'COLABORADOR' ? 'COLABORADOR' : 'GERAL',
+      tipoColaborador: c.tipoColaborador ?? 'CLT',
+      salarioBase:
+        c.salarioBase === null || c.salarioBase === undefined
+          ? ''
+          : String(Number(c.salarioBase)),
+      calcularEncargos: !!c.calcularEncargos,
+      valorDiaria:
+        c.valorDiaria === null || c.valorDiaria === undefined ? '' : String(Number(c.valorDiaria)),
+      quantidade:
+        c.quantidade === null || c.quantidade === undefined ? '' : String(Number(c.quantidade)),
+      dias: c.dias === null || c.dias === undefined ? '' : String(Number(c.dias))
     })
     setEditFixoError(null)
   }
@@ -293,24 +401,21 @@ export default function Custos() {
   }
 
   function handleDeleteFixo(c) {
-    setDeleteError(null)
     setFixoParaExcluir(c)
   }
 
   function confirmExcluirFixo() {
     const c = fixoParaExcluir
     if (!c) return
-    setFeedback(null)
-    setDeleteError(null)
     setExcluindoFixo(true)
     api
       .delete(`/custos-fixos/${c.id}`)
       .then(() => {
-        setFeedback('Custo fixo excluído com sucesso.')
+        setToast({ message: 'Custo fixo excluído com sucesso.', type: 'success' })
         return refresh()
       })
       .catch((e) =>
-        setDeleteError(e?.response?.data?.error ?? e?.message ?? 'Erro ao excluir custo fixo.')
+        setToast({ message: e?.response?.data?.error ?? e?.message ?? 'Erro ao excluir custo fixo.', type: 'error' })
       )
       .finally(() => {
         setExcluindoFixo(false)
@@ -320,11 +425,11 @@ export default function Custos() {
 
   // ===== Custos variáveis: criar / editar / desativar =====
 
-  // Idem para variáveis: o bloco pré-preenche o tipo de cálculo do grupo
+  // Idem para variáveis: o bloco define o tipo de cálculo; a categoria interna
+  // entra como OUTROS (ajustável depois pela edição, que mantém o select)
   function openVarModal(tipoCalculo = '') {
-    setVarForm({ ...VARIAVEL_BLANK, tipoCalculo })
+    setVarForm({ ...VARIAVEL_BLANK, tipoCalculo, categoria: 'OUTROS' })
     setVarError(null)
-    setFeedback(null)
     setVarModalOpen(true)
   }
 
@@ -338,7 +443,7 @@ export default function Custos() {
       .post('/custos-variaveis', payloadVariavel(varForm))
       .then(() => {
         setVarModalOpen(false)
-        setFeedback('Custo variável criado com sucesso.')
+        setToast({ message: 'Custo variável criado com sucesso.', type: 'success' })
         return refresh()
       })
       .catch((e) =>
@@ -380,24 +485,21 @@ export default function Custos() {
   }
 
   function handleDeleteVar(c) {
-    setDeleteError(null)
     setVarParaExcluir(c)
   }
 
   function confirmExcluirVar() {
     const c = varParaExcluir
     if (!c) return
-    setFeedback(null)
-    setDeleteError(null)
     setExcluindoVar(true)
     api
       .delete(`/custos-variaveis/${c.id}`)
       .then(() => {
-        setFeedback('Custo variável excluído com sucesso.')
+        setToast({ message: 'Custo variável excluído com sucesso.', type: 'success' })
         return refresh()
       })
       .catch((e) =>
-        setDeleteError(e?.response?.data?.error ?? e?.message ?? 'Erro ao excluir custo variável.')
+        setToast({ message: e?.response?.data?.error ?? e?.message ?? 'Erro ao excluir custo variável.', type: 'error' })
       )
       .finally(() => {
         setExcluindoVar(false)
@@ -471,25 +573,16 @@ export default function Custos() {
             Organize os custos fixos por categoria e os variáveis por tipo de cálculo.
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <button type="button" className="btn btn-secondary" onClick={() => openVarModal()}>
-            + Novo custo variável
-          </button>
-          <button type="button" className="btn btn-primary" onClick={() => openFixoModal()}>
-            + Novo custo fixo
-          </button>
-        </div>
       </div>
 
-      {feedback && (
-        <div className="alert alert-green" style={{ marginBottom: 12 }}>
-          <div className="alert-msg clr-green">{feedback}</div>
-        </div>
-      )}
-      {deleteError && (
-        <div className="alert alert-red" style={{ marginBottom: 12 }}>
-          <div className="alert-msg clr-red">{deleteError}</div>
-        </div>
+      {/* Feedback flutuante (posição fixa, visível em qualquer rolagem) —
+          substitui o banner inline que ficava no topo do documento */}
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast(null)}
+        />
       )}
 
       {/* Confirmação de exclusão (lógica): mesmo endpoint, histórico preservado */}
@@ -522,8 +615,16 @@ export default function Custos() {
       {fixoModalOpen && (
         <div className="modal-overlay">
           <div className="modal">
-            <div className="modal-title">Novo custo fixo</div>
+            <div className="modal-title">
+              {fixoForm.tipo === 'Colaboradores'
+                ? 'Novo colaborador'
+                : fixoForm.tipo === 'Motoboys'
+                ? 'Novo motoboy'
+                : `Novo custo — ${fixoForm.tipo || 'Custo fixo'}`}
+            </div>
             <form onSubmit={handleCreateFixo}>
+              {/* Fluxo contextual: a categoria do bloco já vem aplicada — sem
+                  campo de categoria nem observação no cadastro */}
               <div className="form-group" style={{ marginBottom: 12 }}>
                 <label className="form-label">Nome</label>
                 <input
@@ -531,11 +632,14 @@ export default function Custos() {
                   type="text"
                   value={fixoForm.nome}
                   onChange={(e) => setFixoForm({ ...fixoForm, nome: e.target.value })}
-                  placeholder="Ex.: Aluguel da loja"
+                  placeholder={
+                    ehColaboradorForm(fixoForm) ? 'Nome do colaborador' : 'Ex.: Aluguel da loja'
+                  }
                   autoFocus
                 />
               </div>
-              <div className="form-grid-2" style={{ marginBottom: 12 }}>
+
+              {!ehColaboradorForm(fixoForm) && (
                 <div className="form-group" style={{ marginBottom: 0 }}>
                   <label className="form-label">Valor mensal (R$)</label>
                   <input
@@ -548,24 +652,202 @@ export default function Custos() {
                     placeholder="0,00"
                   />
                 </div>
-                <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label className="form-label">Categoria (opcional)</label>
-                  <CategoriaFixoSelect
-                    value={fixoForm.tipo}
-                    onChange={(e) => setFixoForm({ ...fixoForm, tipo: e.target.value })}
-                  />
-                </div>
-              </div>
-              <div className="form-group" style={{ marginBottom: 0 }}>
-                <label className="form-label">Observação (opcional)</label>
-                <input
-                  className="form-input"
-                  type="text"
-                  value={fixoForm.observacao}
-                  onChange={(e) => setFixoForm({ ...fixoForm, observacao: e.target.value })}
-                  placeholder="Loja matriz, contrato 12 meses..."
-                />
-              </div>
+              )}
+
+              {ehColaboradorForm(fixoForm) && (
+                <>
+                  <div className="form-grid-2" style={{ marginBottom: 12 }}>
+                    <div className="form-group" style={{ marginBottom: 0 }}>
+                      <label className="form-label">
+                        {fixoForm.tipo === 'Motoboys' ? 'Tipo de motoboy' : 'Tipo de colaborador'}
+                      </label>
+                      <select
+                        className="form-input"
+                        value={fixoForm.tipoColaborador}
+                        onChange={(e) => setFixoForm({ ...fixoForm, tipoColaborador: e.target.value })}
+                      >
+                        {tiposPessoaDoGrupo(fixoForm.tipo).map((t) => (
+                          <option key={t.value} value={t.value}>{t.label}</option>
+                        ))}
+                      </select>
+                    </div>
+                    {fixoForm.tipoColaborador === 'CLT' ? (
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label className="form-label">Salário base (R$)</label>
+                        <input
+                          className="form-input"
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={fixoForm.salarioBase}
+                          onChange={(e) => setFixoForm({ ...fixoForm, salarioBase: e.target.value })}
+                          placeholder="0,00"
+                        />
+                      </div>
+                    ) : fixoForm.tipoColaborador === 'DIARISTA' ? (
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label className="form-label">Valor da diária (R$)</label>
+                        <input
+                          className="form-input"
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={fixoForm.valorDiaria}
+                          onChange={(e) => setFixoForm({ ...fixoForm, valorDiaria: e.target.value })}
+                          placeholder="0,00"
+                        />
+                      </div>
+                    ) : (
+                      <div className="form-group" style={{ marginBottom: 0 }}>
+                        <label className="form-label">Valor mensal (R$)</label>
+                        <input
+                          className="form-input"
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={fixoForm.valorMensal}
+                          onChange={(e) => setFixoForm({ ...fixoForm, valorMensal: e.target.value })}
+                          placeholder="0,00"
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  {fixoForm.tipoColaborador === 'DIARISTA' && (
+                    <>
+                      <div className="form-grid-2" style={{ marginBottom: 12 }}>
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label className="form-label">Quantidade</label>
+                          <input
+                            className="form-input"
+                            type="number"
+                            min="0"
+                            step="0.5"
+                            value={fixoForm.quantidade}
+                            onChange={(e) => setFixoForm({ ...fixoForm, quantidade: e.target.value })}
+                            placeholder="Ex.: 2"
+                          />
+                        </div>
+                        <div className="form-group" style={{ marginBottom: 0 }}>
+                          <label className="form-label">Dias</label>
+                          <input
+                            className="form-input"
+                            type="number"
+                            min="0"
+                            step="0.5"
+                            value={fixoForm.dias}
+                            onChange={(e) => setFixoForm({ ...fixoForm, dias: e.target.value })}
+                            placeholder="Ex.: 8"
+                          />
+                        </div>
+                      </div>
+                      {totalDiarista(fixoForm) !== null && (
+                        <div
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            background: '#f9fafb',
+                            borderRadius: 8,
+                            padding: '8px 12px',
+                            marginBottom: 12,
+                            fontSize: 13,
+                            fontWeight: 600,
+                            color: '#111'
+                          }}
+                        >
+                          <span>Total mensal (diária × qtd. × dias)</span>
+                          <span className="clr-orange">{brl(totalDiarista(fixoForm))}</span>
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {fixoForm.tipoColaborador === 'CLT' && (
+                    <>
+                      <label
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 8,
+                          fontSize: 13,
+                          color: '#444',
+                          marginBottom: 12,
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={fixoForm.calcularEncargos}
+                          onChange={(e) =>
+                            setFixoForm({ ...fixoForm, calcularEncargos: e.target.checked })
+                          }
+                        />
+                        Calcular encargos automaticamente (13º, férias e FGTS)
+                      </label>
+                      {encargosAtivosForm(fixoForm) ? (
+                        (() => {
+                          const prev = encargosClt(fixoForm.salarioBase)
+                          return prev ? (
+                            <div
+                              style={{
+                                background: '#f9fafb',
+                                borderRadius: 8,
+                                padding: '10px 12px',
+                                marginBottom: 12,
+                                fontSize: 12.5,
+                                color: '#555'
+                              }}
+                            >
+                              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
+                                <span>13º mensal</span><span>{brl(prev.decimo)}</span>
+                              </div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
+                                <span>Férias mensal (com 1/3)</span><span>{brl(prev.ferias)}</span>
+                              </div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0' }}>
+                                <span>FGTS (8%)</span><span>{brl(prev.fgts)}</span>
+                              </div>
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  justifyContent: 'space-between',
+                                  padding: '4px 0 0',
+                                  marginTop: 4,
+                                  borderTop: '1px solid #eee',
+                                  fontWeight: 600,
+                                  color: '#111'
+                                }}
+                              >
+                                <span>Total mensal</span><span className="clr-orange">{brl(prev.total)}</span>
+                              </div>
+                              <div style={{ fontSize: 11, color: '#aaa', marginTop: 6 }}>
+                                Estimativa gerencial — o total vira o valor mensal deste custo.
+                              </div>
+                            </div>
+                          ) : (
+                            <div style={{ fontSize: 12, color: '#aaa', marginBottom: 12 }}>
+                              Informe o salário base para ver os encargos calculados.
+                            </div>
+                          )
+                        })()
+                      ) : (
+                        <div className="form-group" style={{ marginBottom: 12 }}>
+                          <label className="form-label">Valor mensal (R$)</label>
+                          <input
+                            className="form-input"
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={fixoForm.valorMensal}
+                            onChange={(e) => setFixoForm({ ...fixoForm, valorMensal: e.target.value })}
+                            placeholder="0,00"
+                          />
+                        </div>
+                      )}
+                    </>
+                  )}
+                </>
+              )}
               {fixoError && (
                 <div className="alert alert-red" style={{ marginTop: 12, marginBottom: 0 }}>
                   <div className="alert-msg clr-red">{fixoError}</div>
@@ -593,8 +875,12 @@ export default function Custos() {
       {varModalOpen && (
         <div className="modal-overlay">
           <div className="modal">
-            <div className="modal-title">Novo custo variável</div>
+            <div className="modal-title">
+              Novo custo — {TIPO_CALCULO_LABEL[varForm.tipoCalculo] ?? 'Custo variável'}
+            </div>
             <form onSubmit={handleCreateVar}>
+              {/* Fluxo contextual: o tipo de cálculo do bloco já vem aplicado —
+                  sem campo de categoria no cadastro (ajustável na edição) */}
               <div className="form-group" style={{ marginBottom: 12 }}>
                 <label className="form-label">Nome</label>
                 <input
@@ -605,34 +891,6 @@ export default function Custos() {
                   placeholder="Ex.: Taxa de cartão crédito"
                   autoFocus
                 />
-              </div>
-              <div className="form-grid-2" style={{ marginBottom: 12 }}>
-                <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label className="form-label">Categoria</label>
-                  <select
-                    className="form-input"
-                    value={varForm.categoria}
-                    onChange={(e) => setVarForm({ ...varForm, categoria: e.target.value })}
-                  >
-                    <option value="">— selecione —</option>
-                    {CATEGORIAS_VARIAVEL.map((c) => (
-                      <option key={c.value} value={c.value}>{c.label}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="form-group" style={{ marginBottom: 0 }}>
-                  <label className="form-label">Tipo de cálculo</label>
-                  <select
-                    className="form-input"
-                    value={varForm.tipoCalculo}
-                    onChange={(e) => setVarForm({ ...varForm, tipoCalculo: e.target.value })}
-                  >
-                    <option value="">— selecione —</option>
-                    {TIPOS_CALCULO.map((t) => (
-                      <option key={t.value} value={t.value}>{t.label}</option>
-                    ))}
-                  </select>
-                </div>
               </div>
               <div className="form-group" style={{ marginBottom: 0 }}>
                 <label className="form-label">
@@ -755,11 +1013,25 @@ export default function Custos() {
                           onChange={(e) => setEditFixoForm({ ...editFixoForm, nome: e.target.value })}
                           placeholder="Nome"
                           autoFocus />
-                        <input className="form-input" style={cellInputStyle}
-                          type="number" min="0" step="0.01"
-                          value={editFixoForm.valorMensal}
-                          onChange={(e) => setEditFixoForm({ ...editFixoForm, valorMensal: e.target.value })}
-                          placeholder="Valor mensal" />
+                        {encargosAtivosForm(editFixoForm) ? (
+                          <input className="form-input" style={cellInputStyle}
+                            type="number" min="0" step="0.01"
+                            value={editFixoForm.salarioBase}
+                            onChange={(e) => setEditFixoForm({ ...editFixoForm, salarioBase: e.target.value })}
+                            placeholder="Salário base" />
+                        ) : diaristaForm(editFixoForm) ? (
+                          <input className="form-input" style={cellInputStyle}
+                            type="number" min="0" step="0.01"
+                            value={editFixoForm.valorDiaria}
+                            onChange={(e) => setEditFixoForm({ ...editFixoForm, valorDiaria: e.target.value })}
+                            placeholder="Valor da diária" />
+                        ) : (
+                          <input className="form-input" style={cellInputStyle}
+                            type="number" min="0" step="0.01"
+                            value={editFixoForm.valorMensal}
+                            onChange={(e) => setEditFixoForm({ ...editFixoForm, valorMensal: e.target.value })}
+                            placeholder="Valor mensal" />
+                        )}
                       </div>
                       <div className="form-grid-2" style={{ marginBottom: 8 }}>
                         <CategoriaFixoSelect
@@ -772,6 +1044,84 @@ export default function Custos() {
                           onChange={(e) => setEditFixoForm({ ...editFixoForm, observacao: e.target.value })}
                           placeholder="Observação (opcional)" />
                       </div>
+                      {GRUPOS_ESPECIAIS.includes(editFixoForm.tipo) && (
+                        <div className="form-grid-2" style={{ marginBottom: 8 }}>
+                          <select className="form-input" style={cellInputStyle}
+                            value={editFixoForm.tipoCusto}
+                            onChange={(e) => setEditFixoForm({ ...editFixoForm, tipoCusto: e.target.value })}>
+                            <option value="GERAL">Custo comum</option>
+                            <option value="COLABORADOR">
+                              {editFixoForm.tipo === 'Motoboys' ? 'Motoboy' : 'Colaborador'}
+                            </option>
+                          </select>
+                          {editFixoForm.tipoCusto === 'COLABORADOR' ? (
+                            <select className="form-input" style={cellInputStyle}
+                              value={editFixoForm.tipoColaborador}
+                              onChange={(e) => setEditFixoForm({ ...editFixoForm, tipoColaborador: e.target.value })}>
+                              {tiposPessoaDoGrupo(editFixoForm.tipo).map((t) => (
+                                <option key={t.value} value={t.value}>{t.label}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            <span />
+                          )}
+                        </div>
+                      )}
+                      {diaristaForm(editFixoForm) && (
+                        <div
+                          style={{
+                            display: 'flex',
+                            gap: 8,
+                            alignItems: 'center',
+                            marginBottom: 8,
+                            flexWrap: 'wrap'
+                          }}
+                        >
+                          <input className="form-input" style={{ ...cellInputStyle, width: 100 }}
+                            type="number" min="0" step="0.5"
+                            value={editFixoForm.quantidade}
+                            onChange={(e) => setEditFixoForm({ ...editFixoForm, quantidade: e.target.value })}
+                            placeholder="Qtd." />
+                          <input className="form-input" style={{ ...cellInputStyle, width: 100 }}
+                            type="number" min="0" step="0.5"
+                            value={editFixoForm.dias}
+                            onChange={(e) => setEditFixoForm({ ...editFixoForm, dias: e.target.value })}
+                            placeholder="Dias" />
+                          {totalDiarista(editFixoForm) !== null && (
+                            <span style={{ fontSize: 12, fontWeight: 600 }} className="clr-orange">
+                              Total: {brl(totalDiarista(editFixoForm))}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                      {ehColaboradorForm(editFixoForm) && editFixoForm.tipoColaborador === 'CLT' && (
+                        <div
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            gap: 8,
+                            marginBottom: 8,
+                            flexWrap: 'wrap'
+                          }}
+                        >
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#444', cursor: 'pointer' }}>
+                            <input
+                              type="checkbox"
+                              checked={editFixoForm.calcularEncargos}
+                              onChange={(e) =>
+                                setEditFixoForm({ ...editFixoForm, calcularEncargos: e.target.checked })
+                              }
+                            />
+                            Calcular encargos
+                          </label>
+                          {encargosAtivosForm(editFixoForm) && encargosClt(editFixoForm.salarioBase) && (
+                            <span style={{ fontSize: 12, fontWeight: 600 }} className="clr-orange">
+                              Total: {brl(encargosClt(editFixoForm.salarioBase).total)}
+                            </span>
+                          )}
+                        </div>
+                      )}
                       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6 }}>
                         <button type="button" className="btn btn-secondary" style={btnCompactStyle}
                           onClick={cancelEditFixo} disabled={editFixoSaving}>
@@ -799,9 +1149,29 @@ export default function Custos() {
                   >
                     <div style={{ minWidth: 0 }}>
                       <div style={{ fontSize: 13, fontWeight: 500, color: '#111' }}>{c.nome}</div>
-                      {c.observacao && (
+                      {/* Linha secundária compacta: CLT mostra base + provisões;
+                          diarista mostra diária × qtd × dias; PJ/demais o tipo */}
+                      {c.tipoCusto === 'COLABORADOR' && c.calcularEncargos && encargosClt(c.salarioBase) ? (
+                        (() => {
+                          const e = encargosClt(c.salarioBase)
+                          return (
+                            <div style={{ fontSize: 11, color: '#aaa' }}>
+                              Base {brl(Number(c.salarioBase))} · 13º {brl(e.decimo)} · Férias {brl(e.ferias)} · FGTS {brl(e.fgts)}
+                            </div>
+                          )
+                        })()
+                      ) : c.tipoCusto === 'COLABORADOR' && c.tipoColaborador === 'DIARISTA' && c.valorDiaria ? (
+                        <div style={{ fontSize: 11, color: '#aaa' }}>
+                          Diária {brl(Number(c.valorDiaria))} · Qtd. {String(Number(c.quantidade ?? 0))} · Dias {String(Number(c.dias ?? 0))}
+                        </div>
+                      ) : c.tipoCusto === 'COLABORADOR' && c.tipoColaborador ? (
+                        <div style={{ fontSize: 11, color: '#aaa' }}>
+                          {{ CLT: 'CLT', FREELANCER: 'Freelancer', PJ: 'PJ', DIARISTA: 'Diarista' }[c.tipoColaborador] ?? 'Colaborador'}
+                          {c.observacao ? ` · ${c.observacao}` : ''}
+                        </div>
+                      ) : c.observacao ? (
                         <div style={{ fontSize: 11, color: '#aaa' }}>{c.observacao}</div>
-                      )}
+                      ) : null}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
                       <span style={{ fontSize: 13, fontWeight: 600 }}>{brl(c.valorMensal)}</span>

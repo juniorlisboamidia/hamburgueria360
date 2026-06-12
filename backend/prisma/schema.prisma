@@ -204,9 +204,23 @@ model ConfiguracaoPrecificacao {
 model CustoFixo {
   id           Int      @id @default(autoincrement())
   nome         String
+  // Valor mensal efetivo usado em TODOS os cálculos (dashboard, PE, totais).
+  // Para colaborador CLT com encargos automáticos, o backend grava aqui o
+  // total calculado (salário + 13º + férias + FGTS) — fonte única, sem duplicar.
   valorMensal  Decimal  @db.Decimal(12, 2)
   tipo         String?
   observacao   String?
+  // Campos opcionais de colaborador (estimativa gerencial, não folha oficial):
+  // tipoCusto GERAL|COLABORADOR; tipoColaborador CLT|FREELANCER|OUTRO|PJ|DIARISTA.
+  // salarioBase fica persistido para reeditar sem perder a base do cálculo.
+  tipoCusto       String?  @default("GERAL")
+  tipoColaborador String?
+  salarioBase     Decimal? @db.Decimal(12, 2)
+  calcularEncargos Boolean @default(false)
+  // Motoboy diarista: total mensal = valorDiaria × quantidade × dias
+  valorDiaria     Decimal? @db.Decimal(12, 2)
+  quantidade      Decimal? @db.Decimal(10, 2)
+  dias            Decimal? @db.Decimal(10, 2)
   ativo        Boolean  @default(true)
   criadoEm     DateTime @default(now())
   atualizadoEm DateTime @updatedAt
