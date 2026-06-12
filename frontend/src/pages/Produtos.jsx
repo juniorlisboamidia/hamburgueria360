@@ -308,8 +308,9 @@ export default function Produtos() {
 
   useEffect(() => { load() }, [])
 
-  function openCreate() {
-    setCreateForm(FORM_BLANK)
+  // Criação contextual: o card de ação de cada aba abre já com o tipo certo
+  function openCreate(tipo = 'PRODUTO') {
+    setCreateForm({ ...FORM_BLANK, tipoProduto: tipo })
     setCreateError(null)
     setCreateOpen(true)
   }
@@ -409,9 +410,6 @@ export default function Produtos() {
           <button type="button" className="btn btn-secondary" onClick={() => setConfigOpen(true)}>
             Configurar precificação
           </button>
-          <button type="button" className="btn btn-primary" onClick={openCreate}>
-            + Novo produto
-          </button>
         </div>
       </div>
 
@@ -441,7 +439,13 @@ export default function Produtos() {
       {createOpen && (
         <div className="modal-overlay">
           <div className="modal">
-            <div className="modal-title">Novo produto</div>
+            <div className="modal-title">
+              {createForm.tipoProduto === 'BEBIDA'
+                ? 'Nova bebida'
+                : createForm.tipoProduto === 'COMBO'
+                ? 'Novo combo'
+                : 'Novo produto'}
+            </div>
             <form onSubmit={handleCreate}>
               <div className="form-group" style={{ marginBottom: 12 }}>
                 <label className="form-label">Tipo</label>
@@ -599,16 +603,26 @@ export default function Produtos() {
         ))}
       </div>
 
-      {produtosDaAba.length === 0 ? (
-        <div className="empty-state">
-          {tipoTab === 'BEBIDA'
-            ? 'Nenhuma bebida cadastrada. Use “+ Novo produto” com o tipo Bebida para cadastrar a primeira.'
-            : tipoTab === 'COMBO'
-            ? 'Nenhum combo cadastrado. Use “+ Novo produto” com o tipo Combo para cadastrar o primeiro.'
-            : 'Nenhum produto cadastrado. Use o botão “+ Novo produto” para cadastrar o primeiro e montar a ficha técnica.'}
-        </div>
-      ) : (
-        <div className="grid-3">
+      <div className="grid-3">
+          {/* Card de ação contextual: sempre o primeiro espaço da grid (apenas UI,
+              não entra em nenhuma contagem) */}
+          <button type="button" className="card card-action" onClick={() => openCreate(tipoTab)}>
+            <span className="card-action-plus">+</span>
+            <span className="card-action-title">
+              {tipoTab === 'BEBIDA'
+                ? 'Cadastrar bebida'
+                : tipoTab === 'COMBO'
+                ? 'Montar combo'
+                : 'Cadastrar produto'}
+            </span>
+            <span className="card-action-sub">
+              {tipoTab === 'BEBIDA'
+                ? 'Cadastro simples de revenda'
+                : tipoTab === 'COMBO'
+                ? 'Combinar produtos e bebidas'
+                : 'Adicionar novo item com ficha técnica'}
+            </span>
+          </button>
           {produtosDaAba.map((p) => {
             const a = p.analise ?? {}
             const tipoP = tipoDoProduto(p)
@@ -815,8 +829,7 @@ export default function Produtos() {
               </div>
             )
           })}
-        </div>
-      )}
+      </div>
     </div>
   )
 }

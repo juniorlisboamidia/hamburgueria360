@@ -461,6 +461,27 @@ a { text-decoration: none; color: inherit; }
   }
 }
 
+/* Card de ação "adicionar novo" (abas de Produtos): visual de card vazio,
+   tracejado e clicável, ocupando o primeiro espaço da grid */
+.card-action {
+  border: 1.5px dashed #ddd;
+  background: #fcfcfc;
+  box-shadow: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 180px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.card-action:hover { border-color: #f97316; background: #fff7ed; }
+.card-action-plus  { font-size: 30px; font-weight: 300; line-height: 1; color: #f97316; }
+.card-action-title { font-size: 14px; font-weight: 600; color: #444; }
+.card-action-sub   { font-size: 11.5px; color: #aaa; }
+
 /* Estados */
 .loading-state { text-align: center; padding: 48px; color: #aaa; font-size: 14px; }
 .empty-state   { text-align: center; padding: 48px; color: #aaa; font-size: 14px; }
