@@ -333,6 +333,20 @@ a { text-decoration: none; color: inherit; }
 .btn-icon:hover { opacity: 1; color: #555; background: #f9fafb; border-color: #d8d8d8; }
 .btn-icon:disabled { opacity: 0.5; cursor: default; }
 
+/* Barra de participação por grupo (aba Análise de custos) */
+.particip-bar-track {
+  height: 6px;
+  background: #f3f4f6;
+  border-radius: 999px;
+  overflow: hidden;
+}
+.particip-bar-fill {
+  height: 100%;
+  background: #f97316;
+  border-radius: 999px;
+  transition: width 0.25s ease;
+}
+
 /* Alertas */
 .alert { border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; display: flex; gap: 10px; align-items: flex-start; }
 .alert-red    { background: #fef2f2; border: 1px solid #fecaca; }

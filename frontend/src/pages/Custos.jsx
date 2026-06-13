@@ -17,6 +17,22 @@ function pct(value) {
   if (value === null || value === undefined) return '—'
   return `${Number(value).toFixed(2).replace('.', ',')}%`
 }
+// Percentual com 1 casa decimal (padrão da visão analítica)
+function pct1(value) {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return '—'
+  return `${Number(value).toFixed(1).replace('.', ',')}%`
+}
+// Mesmo padrão de período da tela de Faturamento: mês corrente (YYYY-MM)
+function mesAtualYM() {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+}
+function labelMesAtual() {
+  const meses = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+                 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro']
+  const d = new Date()
+  return `${meses[d.getMonth()]} de ${d.getFullYear()}`
+}
 
 // ===== Custos fixos =====
 
@@ -260,6 +276,12 @@ export default function Custos() {
   const [error, setError] = useState(null)
   const [toast, setToast] = useState(null)
 
+  // Abas da página: Lançamentos (cadastro atual) e Análise (visão gerencial)
+  const [aba, setAba] = useState('LANCAMENTOS')
+  // Faturamento do mês corrente para a Análise (falha vira lista vazia para
+  // nunca derrubar a tela de custos por causa de um indicador)
+  const [faturamentoMes, setFaturamentoMes] = useState([])
+
   // Criação (modais)
   const [fixoModalOpen, setFixoModalOpen] = useState(false)
   const [fixoForm, setFixoForm] = useState(FIXO_BLANK)
@@ -289,13 +311,20 @@ export default function Custos() {
   const [excluindoVar, setExcluindoVar] = useState(false)
   
 
+  function fetchFaturamentoMes() {
+    return api
+      .get('/faturamento', { params: { mes: mesAtualYM() } })
+      .catch(() => ({ data: [] }))
+  }
+
   function load() {
     setLoading(true)
     setError(null)
-    Promise.all([api.get('/custos-fixos'), api.get('/custos-variaveis')])
-      .then(([fixosRes, variaveisRes]) => {
+    Promise.all([api.get('/custos-fixos'), api.get('/custos-variaveis'), fetchFaturamentoMes()])
+      .then(([fixosRes, variaveisRes, fatRes]) => {
         setFixos(fixosRes.data)
         setVariaveis(variaveisRes.data)
+        setFaturamentoMes(Array.isArray(fatRes.data) ? fatRes.data : [])
         setLoading(false)
       })
       .catch((err) => {
@@ -311,10 +340,11 @@ export default function Custos() {
 
   // Recarrega as listas sem o loading de página inteira
   function refresh() {
-    return Promise.all([api.get('/custos-fixos'), api.get('/custos-variaveis')])
-      .then(([fixosRes, variaveisRes]) => {
+    return Promise.all([api.get('/custos-fixos'), api.get('/custos-variaveis'), fetchFaturamentoMes()])
+      .then(([fixosRes, variaveisRes, fatRes]) => {
         setFixos(fixosRes.data)
         setVariaveis(variaveisRes.data)
+        setFaturamentoMes(Array.isArray(fatRes.data) ? fatRes.data : [])
       })
   }
 
@@ -570,9 +600,29 @@ export default function Custos() {
         <div>
           <h1>Custos</h1>
           <div className="page-header-sub">
-            Organize os custos fixos por categoria e os variáveis por tipo de cálculo.
+            {aba === 'ANALISE'
+              ? 'Indicadores e alertas gerenciais calculados a partir dos custos cadastrados.'
+              : 'Organize os custos fixos por categoria e os variáveis por tipo de cálculo.'}
           </div>
         </div>
+      </div>
+
+      {/* Separação cadastro × análise: a aba Lançamentos mantém a tela atual */}
+      <div className="modal-tabs" style={{ marginBottom: 14 }}>
+        <button
+          type="button"
+          className={'modal-tab' + (aba === 'LANCAMENTOS' ? ' active' : '')}
+          onClick={() => setAba('LANCAMENTOS')}
+        >
+          Lançamentos
+        </button>
+        <button
+          type="button"
+          className={'modal-tab' + (aba === 'ANALISE' ? ' active' : '')}
+          onClick={() => setAba('ANALISE')}
+        >
+          Análise
+        </button>
       </div>
 
       {/* Feedback flutuante (posição fixa, visível em qualquer rolagem) —
@@ -929,6 +979,22 @@ export default function Custos() {
         </div>
       )}
 
+      {aba === 'ANALISE' && (
+        <AnaliseCustos
+          fixos={fixos}
+          variaveis={variaveis}
+          gruposComItens={gruposComItens}
+          maiorGrupoFixo={maiorGrupoFixo}
+          totalCustosFixos={totalCustosFixos}
+          totalVariaveisPercentuais={totalVariaveisPercentuais}
+          totalVariaveisPorPedido={totalVariaveisPorPedido}
+          totalVariaveisFixoMensal={totalVariaveisFixoMensal}
+          faturamentoMes={faturamentoMes}
+        />
+      )}
+
+      {aba === 'LANCAMENTOS' && (
+      <>
       {/* Resumo */}
       <div className="section-title">Resumo</div>
       <div className="grid-4">
@@ -1358,6 +1424,260 @@ export default function Custos() {
         <div className="alert alert-red" style={{ marginTop: 10 }}>
           <div className="alert-msg clr-red">{editVarError}</div>
         </div>
+      )}
+      </>
+      )}
+    </div>
+  )
+}
+
+// ============ Aba Análise: visão gerencial dos custos ============
+// Tudo derivado dos dados já carregados (custos + faturamento do mês corrente).
+// Nenhuma divisão sem guarda: sem pedidos/faturamento os indicadores viram
+// estado orientativo, nunca NaN/Infinity.
+
+function AnaliseCustos({
+  fixos,
+  variaveis,
+  gruposComItens,
+  maiorGrupoFixo,
+  totalCustosFixos,
+  totalVariaveisPercentuais,
+  totalVariaveisPorPedido,
+  totalVariaveisFixoMensal,
+  faturamentoMes
+}) {
+  const temCustos = fixos.length > 0 || variaveis.length > 0
+
+  if (!temCustos) {
+    return (
+      <div className="card" style={{ padding: '28px 20px', textAlign: 'center' }}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: '#444', marginBottom: 4 }}>
+          Cadastre seus custos para visualizar a análise.
+        </div>
+        <div style={{ fontSize: 12.5, color: '#999' }}>
+          Use a aba Lançamentos para registrar custos fixos e variáveis.
+        </div>
+      </div>
+    )
+  }
+
+  // Período analisado = mês corrente (mesmo padrão da tela de Faturamento)
+  const faturamentoPeriodo = faturamentoMes.reduce((s, r) => s + Number(r.valorTotal ?? 0), 0)
+  const totalPedidosPeriodo = faturamentoMes.reduce(
+    (s, r) => s + Number(r.quantidadePedidos ?? 0),
+    0
+  )
+  const temFaturamento = faturamentoPeriodo > 0
+  const temPedidos = totalPedidosPeriodo > 0
+
+  // custoFixoDiario = custoFixoMensal / 30 (também é a meta mínima diária
+  // de faturamento para cobrir a estrutura fixa)
+  const custoFixoDiario = totalCustosFixos / 30
+  const custoFixoPorPedido = temPedidos ? totalCustosFixos / totalPedidosPeriodo : null
+  const percentualFixoSobreFaturamento = temFaturamento
+    ? (totalCustosFixos / faturamentoPeriodo) * 100
+    : null
+
+  // Custos variáveis estimados no período: fixo mensal + (por pedido × pedidos)
+  // + (% × faturamento) — componentes sem dados ficam de fora da estimativa
+  const variaveisDePedidos = temPedidos ? totalVariaveisPorPedido * totalPedidosPeriodo : 0
+  const variaveisDeFaturamento = temFaturamento
+    ? (totalVariaveisPercentuais / 100) * faturamentoPeriodo
+    : 0
+  const custoVariavelEstimado = totalVariaveisFixoMensal + variaveisDePedidos + variaveisDeFaturamento
+  const custoOperacionalEstimado = totalCustosFixos + custoVariavelEstimado
+  const operacionalParcial = !temFaturamento || !temPedidos
+
+  // Participação dos grupos sobre o custo fixo total (maior primeiro)
+  const participacao = [...gruposComItens]
+    .sort((a, b) => b.subtotal - a.subtotal)
+    .map((g) => ({
+      ...g,
+      percentual: totalCustosFixos > 0 ? (g.subtotal / totalCustosFixos) * 100 : 0
+    }))
+
+  function percentualDoGrupo(nome) {
+    const g = participacao.find((x) => x.categoria === nome)
+    return g ? g.percentual : null
+  }
+
+  // ===== Alertas gerenciais =====
+  const alertas = []
+  const pctColaboradores = percentualDoGrupo('Colaboradores')
+  if (pctColaboradores !== null && pctColaboradores > 45) {
+    alertas.push({
+      nivel: 'atencao',
+      texto: `Colaboradores representam ${pct1(pctColaboradores)} dos custos fixos. Avalie se a equipe está proporcional ao faturamento.`
+    })
+  }
+  const pctMotoboys = percentualDoGrupo('Motoboys')
+  if (pctMotoboys !== null && pctMotoboys > 20) {
+    alertas.push({
+      nivel: 'atencao',
+      texto: `Motoboys representam ${pct1(pctMotoboys)} dos custos fixos. Verifique impacto da logística na operação.`
+    })
+  }
+  const pctMarketing = percentualDoGrupo('Marketing')
+  if (pctMarketing !== null && pctMarketing > 10) {
+    alertas.push({
+      nivel: 'atencao',
+      texto: `Marketing representa ${pct1(pctMarketing)} dos custos fixos. Confirme se o investimento está retornando em vendas.`
+    })
+  }
+  if (custoFixoDiario > 0 && !temFaturamento) {
+    alertas.push({
+      nivel: 'atencao',
+      texto: `Você precisa faturar pelo menos ${brl(custoFixoDiario)} por dia apenas para cobrir custos fixos.`
+    })
+  }
+  if (percentualFixoSobreFaturamento !== null && percentualFixoSobreFaturamento > 35) {
+    alertas.push({
+      nivel: 'atencao',
+      texto: `Custos fixos representam ${pct1(percentualFixoSobreFaturamento)} do faturamento. A estrutura pode estar pesada para o volume atual.`
+    })
+  }
+  if (!temFaturamento) {
+    alertas.push({
+      nivel: 'info',
+      texto: 'Cadastre faturamento e pedidos para analisar custo por pedido e peso dos custos sobre as vendas.'
+    })
+  }
+
+  const ALERTA_CLS = { atencao: 'alert-yellow', info: 'alert-gray' }
+  const hintPeriodo = temFaturamento
+    ? `Faturamento de ${labelMesAtual()}: ${brl(faturamentoPeriodo)}`
+    : `Sem faturamento em ${labelMesAtual()}`
+
+  return (
+    <div>
+      {/* Cards principais */}
+      <div className="section-title">Indicadores principais</div>
+      <div className="grid-4">
+        <Card
+          title="Custo Fixo Mensal"
+          value={brl(totalCustosFixos)}
+          hint={`${fixos.length} custo${fixos.length === 1 ? '' : 's'} fixo${fixos.length === 1 ? '' : 's'} ativo${fixos.length === 1 ? '' : 's'}`}
+          variant="brand"
+        />
+        <Card
+          title="Custo Fixo Diário"
+          value={brl(custoFixoDiario)}
+          hint="Custo fixo mensal ÷ 30 dias"
+          variant="info"
+        />
+        <Card
+          title="Maior Grupo de Custo Fixo"
+          value={maiorGrupoFixo ? maiorGrupoFixo.categoria : '—'}
+          hint={
+            maiorGrupoFixo && totalCustosFixos > 0
+              ? `${brl(maiorGrupoFixo.subtotal)} · ${pct1((maiorGrupoFixo.subtotal / totalCustosFixos) * 100)} do custo fixo`
+              : 'Nenhum custo fixo cadastrado'
+          }
+          variant="info"
+        />
+        <Card
+          title="Custo Fixo por Pedido"
+          value={custoFixoPorPedido === null ? '—' : brl(custoFixoPorPedido)}
+          hint={
+            custoFixoPorPedido === null
+              ? 'Cadastre faturamento e pedidos para calcular custo fixo por pedido.'
+              : `${totalPedidosPeriodo} pedido${totalPedidosPeriodo === 1 ? '' : 's'} em ${labelMesAtual()}`
+          }
+          variant={custoFixoPorPedido === null ? 'warn' : 'info'}
+        />
+      </div>
+
+      {/* Cards secundários */}
+      <div className="grid-4" style={{ marginTop: 4 }}>
+        <Card
+          title="Meta Diária de Faturamento"
+          value={brl(custoFixoDiario)}
+          hint="Faturamento mínimo por dia para cobrir a estrutura fixa"
+        />
+        <Card
+          title="Custo Fixo sobre Faturamento"
+          value={percentualFixoSobreFaturamento === null ? '—' : pct1(percentualFixoSobreFaturamento)}
+          hint={hintPeriodo}
+          variant={
+            percentualFixoSobreFaturamento === null
+              ? 'warn'
+              : percentualFixoSobreFaturamento > 35
+              ? 'danger'
+              : 'success'
+          }
+        />
+        <Card
+          title="Custos Variáveis Estimados"
+          value={brl(custoVariavelEstimado)}
+          hint={`${pct1(totalVariaveisPercentuais)} do faturamento · ${brl(totalVariaveisPorPedido)} por pedido · ${brl(totalVariaveisFixoMensal)} fixo mensal`}
+        />
+        <Card
+          title="Custo Operacional Estimado"
+          value={brl(custoOperacionalEstimado)}
+          hint={
+            operacionalParcial
+              ? 'Cálculo parcial — sem faturamento/pedidos, considera apenas fixos + variáveis de valor mensal.'
+              : `Fixos + variáveis estimados de ${labelMesAtual()}`
+          }
+          variant={operacionalParcial ? 'warn' : 'info'}
+        />
+      </div>
+
+      {/* Participação por grupo */}
+      <div className="section-title">Participação por grupo de custo fixo</div>
+      <div className="card" style={{ padding: '16px 18px' }}>
+        {participacao.length === 0 ? (
+          <div style={{ fontSize: 12.5, color: '#bbb' }}>
+            Nenhum custo fixo cadastrado ainda.
+          </div>
+        ) : (
+          participacao.map((g) => (
+            <div key={g.categoria} style={{ padding: '8px 0' }}>
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'baseline',
+                  gap: 8,
+                  marginBottom: 5
+                }}
+              >
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#333' }}>
+                  {g.categoria}
+                  <span style={{ fontSize: 11, fontWeight: 400, color: '#aaa', marginLeft: 8 }}>
+                    {g.itens.length} {g.itens.length === 1 ? 'item' : 'itens'}
+                  </span>
+                </span>
+                <span style={{ fontSize: 12.5, color: '#555' }}>
+                  <strong>{brl(g.subtotal)}</strong> · {pct1(g.percentual)}
+                </span>
+              </div>
+              <div className="particip-bar-track">
+                <div
+                  className="particip-bar-fill"
+                  style={{ width: `${Math.min(100, Math.max(0, g.percentual))}%` }}
+                />
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {/* Alertas gerenciais */}
+      <div className="section-title">Alertas gerenciais</div>
+      {alertas.length === 0 ? (
+        <div className="alert alert-green">
+          <div className="alert-msg clr-green">
+            Nenhum alerta relevante encontrado com os dados atuais.
+          </div>
+        </div>
+      ) : (
+        alertas.map((a) => (
+          <div key={a.texto} className={`alert ${ALERTA_CLS[a.nivel] ?? 'alert-gray'}`}>
+            <div className="alert-msg">{a.texto}</div>
+          </div>
+        ))
       )}
     </div>
   )
