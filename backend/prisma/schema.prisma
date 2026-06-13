@@ -35,6 +35,8 @@ model Insumo {
   atualizadoEm   DateTime   @updatedAt
 
   fichaTecnicaItens FichaTecnicaItem[]
+  // Usos deste insumo como custo adicional de combos (box, sacola, embalagem especial)
+  comboInsumos      ComboInsumo[]
 
   // Receita própria (quando o insumo é PRODUCAO_PROPRIA)
   receitaProducao ReceitaProducao?      @relation("ReceitaDoInsumo")
@@ -103,6 +105,9 @@ model Produto {
   // ===== Inteligência do cardápio (análises estratégicas futuras) =====
   // Produto assinatura da marca: não é recomendado para remoção automática
   produtoAncora             Boolean @default(false)
+  // Produto isca: item de aquisição (preço/benefício agressivo) para atrair
+  // clientes e gerar volume/upsell — margem menor não significa ruim
+  produtoIsca               Boolean @default(false)
   // Permite tirar o item do ranking estratégico (bebidas commodity saem por padrão)
   incluirAnaliseEstrategica Boolean @default(true)
   // Classificação da bebida na análise: COMMODITY (refri/revenda) ou AUTORAL (da casa)
@@ -114,6 +119,8 @@ model Produto {
   fichaTecnica FichaTecnicaItem[]
   comboItens   ComboItem[]        @relation("ItensDoCombo")
   emCombos     ComboItem[]        @relation("ProdutoEmCombos")
+  // Insumos adicionais quando este Produto é um COMBO (box, sacola, etc.)
+  comboInsumos ComboInsumo[]      @relation("InsumosAdicionaisCombo")
 
   @@index([nome])
   @@index([ativo])
@@ -128,6 +135,10 @@ model ComboItem {
   comboId      Int
   produtoId    Int
   quantidade   Decimal  @db.Decimal(10, 2)
+  // Quando o produto entra no combo, por padrão a embalagem individual da ficha
+  // técnica (itens tipoUso=EMBALAGEM) NÃO entra no custo do combo — costuma ser
+  // substituída por uma embalagem única do combo. true mantém a embalagem.
+  incluirEmbalagemIndividual Boolean @default(false)
   criadoEm     DateTime @default(now())
   atualizadoEm DateTime @updatedAt
 
@@ -138,6 +149,31 @@ model ComboItem {
   @@unique([comboId, produtoId])
   @@index([comboId])
   @@index([produtoId])
+}
+
+// ============================================================
+// Insumos adicionais do combo: custos próprios do combo que não vêm dos
+// produtos/bebidas (box única, sacola, embalagem especial, brinde). Referenciam
+// um Insumo do cadastro geral, sem duplicá-lo.
+// ============================================================
+model ComboInsumo {
+  id                Int      @id @default(autoincrement())
+  comboId           Int
+  insumoId          Int
+  quantidade        Decimal  @db.Decimal(12, 4)
+  // Mesma semântica da ficha técnica: "BASE" usa a unidade base do insumo;
+  // "PORCAO" usa porções de produção própria (1 = uma porção da receita).
+  modoUsoQuantidade String?  @default("BASE")
+  criadoEm          DateTime @default(now())
+  atualizadoEm      DateTime @updatedAt
+
+  combo  Produto @relation("InsumosAdicionaisCombo", fields: [comboId], references: [id], onDelete: Cascade)
+  insumo Insumo  @relation(fields: [insumoId], references: [id], onDelete: Restrict)
+
+  // Mesmo insumo adicionado de novo soma quantidade (consolidado por insumo)
+  @@unique([comboId, insumoId])
+  @@index([comboId])
+  @@index([insumoId])
 }
 
 // ============================================================

@@ -204,9 +204,9 @@ const CMV_COLOR_CLASS = {
 // do ranking e como COMMODITY; produto/combo entram no ranking por padrão
 function estrategiaPadraoPorTipo(tipo) {
   if (tipo === 'BEBIDA') {
-    return { produtoAncora: false, incluirAnaliseEstrategica: false, tipoBebidaAnalise: 'COMMODITY' }
+    return { produtoAncora: false, produtoIsca: false, incluirAnaliseEstrategica: false, tipoBebidaAnalise: 'COMMODITY' }
   }
-  return { produtoAncora: false, incluirAnaliseEstrategica: true, tipoBebidaAnalise: '' }
+  return { produtoAncora: false, produtoIsca: false, incluirAnaliseEstrategica: true, tipoBebidaAnalise: '' }
 }
 
 const FORM_BLANK = {
@@ -237,9 +237,10 @@ function payloadFromForm(form) {
     precoVenda: Number(form.precoVenda),
     tipoProduto: tipo,
     custoDireto: tipo === 'BEBIDA' && form.custoDireto !== '' ? Number(form.custoDireto) : null,
-    // Inteligência do cardápio: âncora só faz sentido em produto/combo;
+    // Inteligência do cardápio: âncora/isca só fazem sentido em produto/combo;
     // tipoBebidaAnalise só em bebida
     produtoAncora: tipo === 'BEBIDA' ? false : !!form.produtoAncora,
+    produtoIsca: tipo === 'BEBIDA' ? false : !!form.produtoIsca,
     incluirAnaliseEstrategica: !!form.incluirAnaliseEstrategica,
     tipoBebidaAnalise: tipo === 'BEBIDA' ? (form.tipoBebidaAnalise || 'COMMODITY') : null
   }
@@ -276,6 +277,96 @@ function MetricRow({ label, children }) {
   )
 }
 
+// Card/opção selecionável da seção de inteligência (toggle ou seletor)
+function IntelOption({ active, title, desc, onClick }) {
+  return (
+    <button
+      type="button"
+      className={'intel-option' + (active ? ' active' : '')}
+      onClick={onClick}
+      aria-pressed={active}
+    >
+      <div className="intel-option-title">
+        <span>{title}</span>
+        {active && <span className="intel-option-check" aria-hidden="true">✓</span>}
+      </div>
+      <div className="intel-option-desc">{desc}</div>
+    </button>
+  )
+}
+
+// Bloco "Inteligência do cardápio" reutilizado na criação e na edição (produto,
+// bebida e combo). Recebe form/onChange para refletir os valores atuais e
+// permitir alteração. Produto/combo: cartões padrão/assinatura/isca (toggles).
+// Bebida: seletor Commodity/Autoral. "Incluir na análise" é um switch em todos.
+function InteligenciaCardapioFields({ form, onChange }) {
+  const tipo = form.tipoProduto ?? 'PRODUTO'
+  const ancora = !!form.produtoAncora
+  const isca = !!form.produtoIsca
+  const incluir = !!form.incluirAnaliseEstrategica
+  const tipoBebida = form.tipoBebidaAnalise || 'COMMODITY'
+
+  return (
+    <div className="intel-section">
+      <div className="intel-head">Inteligência do cardápio</div>
+      <div className="intel-sub">
+        Use essas marcações para orientar futuras análises de vendas, margem e cardápio.
+      </div>
+
+      {tipo === 'BEBIDA' ? (
+        <div className="intel-options intel-options-2">
+          <IntelOption
+            active={tipoBebida === 'COMMODITY'}
+            title="Commodity"
+            desc="Refrigerante / revenda. Fica fora do ranking estratégico por padrão."
+            onClick={() => onChange({ tipoBebidaAnalise: 'COMMODITY' })}
+          />
+          <IntelOption
+            active={tipoBebida === 'AUTORAL'}
+            title="Autoral / da casa"
+            desc="Bebida própria da marca, avaliada como item estratégico."
+            onClick={() => onChange({ tipoBebidaAnalise: 'AUTORAL' })}
+          />
+        </div>
+      ) : (
+        <div className="intel-options">
+          <IntelOption
+            active={!ancora && !isca}
+            title="Produto padrão"
+            desc="Produto comum do cardápio."
+            onClick={() => onChange({ produtoAncora: false, produtoIsca: false })}
+          />
+          <IntelOption
+            active={ancora}
+            title="Produto assinatura"
+            desc="Representa a marca e não deve ser avaliado apenas por volume."
+            onClick={() => onChange({ produtoAncora: !ancora })}
+          />
+          <IntelOption
+            active={isca}
+            title="Produto isca"
+            desc="Atrai novos clientes, gera volume e estimula upsell."
+            onClick={() => onChange({ produtoIsca: !isca })}
+          />
+        </div>
+      )}
+
+      <button
+        type="button"
+        className="intel-switch-row"
+        onClick={() => onChange({ incluirAnaliseEstrategica: !incluir })}
+        aria-pressed={incluir}
+      >
+        <span>
+          <span className="intel-switch-label">Incluir na análise estratégica</span>
+          <span className="intel-switch-desc">Entra no ranking e nas comparações de cardápio.</span>
+        </span>
+        <span className={'intel-switch' + (incluir ? ' on' : '')} aria-hidden="true" />
+      </button>
+    </div>
+  )
+}
+
 export default function Produtos() {
   const [produtos, setProdutos] = useState([])
   const [loading, setLoading] = useState(true)
@@ -295,6 +386,7 @@ export default function Produtos() {
   const [fichaProdutoId, setFichaProdutoId] = useState(null)
   const [configOpen, setConfigOpen] = useState(false)
   const [tipoTab, setTipoTab] = useState('PRODUTO')
+  const [busca, setBusca] = useState('')
 
   function fetchProdutos() {
     return api
@@ -444,6 +536,18 @@ export default function Produtos() {
   // Itens da aba selecionada
   const produtosDaAba = produtos.filter((p) => tipoDoProduto(p) === tipoTab)
 
+  // Busca instantânea dentro da aba atual: ignora caixa e espaços extras, casa
+  // por nome e descrição (para achar fichas pelo nome do produto rapidamente)
+  const termoBusca = busca.trim().toLowerCase()
+  const produtosFiltrados =
+    termoBusca === ''
+      ? produtosDaAba
+      : produtosDaAba.filter((p) => {
+          const alvo = `${p.nome ?? ''} ${p.descricao ?? ''}`.toLowerCase()
+          return alvo.includes(termoBusca)
+        })
+  const buscaSemResultado = termoBusca !== '' && produtosFiltrados.length === 0
+
   return (
     <div>
       <div className="page-header">
@@ -574,55 +678,10 @@ export default function Produtos() {
               )}
 
               {/* Inteligência do cardápio: marcações discretas para análises futuras */}
-              <div
-                style={{
-                  marginTop: 14,
-                  paddingTop: 12,
-                  borderTop: '1px solid #f0f0f0'
-                }}
-              >
-                <div style={{ fontSize: 11, fontWeight: 600, color: '#aaa', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
-                  Inteligência do cardápio
-                </div>
-
-                {createForm.tipoProduto === 'BEBIDA' && (
-                  <div className="form-group" style={{ marginBottom: 10 }}>
-                    <label className="form-label">Tipo de bebida</label>
-                    <select
-                      className="form-input"
-                      value={createForm.tipoBebidaAnalise || 'COMMODITY'}
-                      onChange={(e) => setCreateForm({ ...createForm, tipoBebidaAnalise: e.target.value })}
-                    >
-                      <option value="COMMODITY">Commodity (refrigerante / revenda)</option>
-                      <option value="AUTORAL">Autoral / da casa</option>
-                    </select>
-                  </div>
-                )}
-
-                {createForm.tipoProduto !== 'BEBIDA' && (
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#444', marginBottom: 8, cursor: 'pointer' }}>
-                    <input
-                      type="checkbox"
-                      checked={createForm.produtoAncora}
-                      onChange={(e) => setCreateForm({ ...createForm, produtoAncora: e.target.checked })}
-                    />
-                    Produto âncora / assinatura da marca
-                  </label>
-                )}
-
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#444', cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={createForm.incluirAnaliseEstrategica}
-                    onChange={(e) => setCreateForm({ ...createForm, incluirAnaliseEstrategica: e.target.checked })}
-                  />
-                  Incluir na análise estratégica
-                </label>
-
-                <div style={{ fontSize: 11, color: '#aaa', marginTop: 8, lineHeight: 1.5 }}>
-                  Essas marcações serão usadas em análises futuras de vendas, margem e cardápio.
-                </div>
-              </div>
+              <InteligenciaCardapioFields
+                form={createForm}
+                onChange={(patch) => setCreateForm({ ...createForm, ...patch })}
+              />
 
               {createError && (
                 <div className="alert alert-red" style={{ marginTop: 12, marginBottom: 0 }}>
@@ -701,16 +760,65 @@ export default function Produtos() {
             key={t.value}
             type="button"
             className={'modal-tab' + (tipoTab === t.value ? ' active' : '')}
-            onClick={() => setTipoTab(t.value)}
+            onClick={() => { setTipoTab(t.value); setBusca('') }}
           >
             {t.label}
           </button>
         ))}
       </div>
 
+      {/* Busca instantânea da aba atual */}
+      <div style={{ position: 'relative', marginBottom: 14, maxWidth: 460 }}>
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="#aaa"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+          style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}
+        >
+          <circle cx="11" cy="11" r="7" />
+          <path d="m21 21-4.3-4.3" />
+        </svg>
+        <input
+          className="form-input"
+          type="text"
+          value={busca}
+          onChange={(e) => setBusca(e.target.value)}
+          placeholder="Pesquisar produto, bebida ou combo..."
+          style={{ paddingLeft: 36, paddingRight: busca ? 36 : 12 }}
+          aria-label="Pesquisar"
+        />
+        {busca && (
+          <button
+            type="button"
+            onClick={() => setBusca('')}
+            title="Limpar busca"
+            aria-label="Limpar busca"
+            style={{
+              position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)',
+              border: 'none', background: 'transparent', color: '#aaa', cursor: 'pointer',
+              fontSize: 18, lineHeight: 1, padding: '4px 6px'
+            }}
+          >
+            ×
+          </button>
+        )}
+      </div>
+
+      {buscaSemResultado ? (
+        <div className="empty-state" style={{ padding: '32px 16px' }}>
+          Nenhum item encontrado para essa busca.
+        </div>
+      ) : (
       <div className="grid-3">
-          {/* Card de ação contextual: sempre o primeiro espaço da grid (apenas UI,
-              não entra em nenhuma contagem) */}
+          {/* Card de ação contextual: primeiro espaço da grid quando não há busca
+              ativa (apenas UI, não entra em nenhuma contagem) */}
+          {termoBusca === '' && (
           <button type="button" className="card card-action" onClick={() => openCreate(tipoTab)}>
             <span className="card-action-plus">+</span>
             <span className="card-action-title">
@@ -728,7 +836,8 @@ export default function Produtos() {
                 : 'Adicionar novo item com ficha técnica'}
             </span>
           </button>
-          {produtosDaAba.map((p) => {
+          )}
+          {produtosFiltrados.map((p) => {
             const a = p.analise ?? {}
             const tipoP = tipoDoProduto(p)
             // Badge = saúde GERAL da precificação (statusGeral); a linha "CMV do
@@ -799,6 +908,18 @@ export default function Produtos() {
                     <div style={{ fontWeight: 600, color: '#111', fontSize: 14 }}>{p.nome}</div>
                     {p.descricao && (
                       <div style={{ fontSize: 11, color: '#aaa', marginTop: 2 }}>{p.descricao}</div>
+                    )}
+                    {/* Marcações estratégicas — discretas, não competem com o badge de saúde */}
+                    {(p.produtoAncora ||
+                      p.produtoIsca ||
+                      (tipoP === 'BEBIDA' && p.tipoBebidaAnalise === 'AUTORAL' && p.incluirAnaliseEstrategica)) && (
+                      <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginTop: 6 }}>
+                        {p.produtoAncora && <span className="badge-strategic badge-assinatura">Assinatura</span>}
+                        {p.produtoIsca && <span className="badge-strategic badge-isca">Isca</span>}
+                        {tipoP === 'BEBIDA' && p.tipoBebidaAnalise === 'AUTORAL' && p.incluirAnaliseEstrategica && (
+                          <span className="badge-strategic badge-autoral">Autoral</span>
+                        )}
+                      </div>
                     )}
                   </div>
                   <span className={'badge ' + (STATUS_BADGE[statusGeralProduto] ?? 'badge-gray')}>
@@ -998,6 +1119,7 @@ export default function Produtos() {
             )
           })}
       </div>
+      )}
     </div>
   )
 }
@@ -1305,6 +1427,15 @@ function FichaModal({ produtoId, onClose, onChanged }) {
   const [comboSubmitting, setComboSubmitting] = useState(false)
   const [editComboItemId, setEditComboItemId] = useState(null)
   const [editComboQty, setEditComboQty] = useState('')
+  const [togglandoEmbalagemId, setTogglandoEmbalagemId] = useState(null)
+
+  // ===== Combo: insumos adicionais (box, sacola, embalagem especial) =====
+  const [comboInsumoSelId, setComboInsumoSelId] = useState('')
+  const [comboInsumoQty, setComboInsumoQty] = useState('1')
+  const [comboInsumoError, setComboInsumoError] = useState(null)
+  const [comboInsumoSubmitting, setComboInsumoSubmitting] = useState(false)
+  const [editComboInsumoId, setEditComboInsumoId] = useState(null)
+  const [editComboInsumoQty, setEditComboInsumoQty] = useState('')
 
   function applyFicha(fichaData) {
     setProduto(fichaData.produto)
@@ -1345,7 +1476,15 @@ function FichaModal({ produtoId, onClose, onChanged }) {
           custoDireto:
             prod.custoDireto === null || prod.custoDireto === undefined
               ? ''
-              : String(Number(prod.custoDireto))
+              : String(Number(prod.custoDireto)),
+          // Inteligência do cardápio: carrega os valores atuais para que a edição
+          // mostre o estado real e não sobrescreva com defaults ao salvar
+          produtoAncora: !!prod.produtoAncora,
+          produtoIsca: !!prod.produtoIsca,
+          incluirAnaliseEstrategica: !!prod.incluirAnaliseEstrategica,
+          tipoBebidaAnalise:
+            prod.tipoBebidaAnalise ??
+            ((prod.tipoProduto ?? 'PRODUTO') === 'BEBIDA' ? 'COMMODITY' : '')
         })
         setLoading(false)
       })
@@ -1612,6 +1751,80 @@ function FichaModal({ produtoId, onClose, onChanged }) {
       )
   }
 
+  // Liga/desliga a embalagem individual de um item do combo (padrão: desligada)
+  function handleToggleEmbalagem(item) {
+    setComboError(null)
+    setTogglandoEmbalagemId(item.id)
+    api
+      .put(`/produtos/${produtoId}/combo-itens/${item.id}`, {
+        incluirEmbalagemIndividual: !item.incluirEmbalagemIndividual
+      })
+      .then(() => reload())
+      .catch((err) =>
+        setComboError(err?.response?.data?.error ?? err?.message ?? 'Erro ao atualizar embalagem.')
+      )
+      .finally(() => setTogglandoEmbalagemId(null))
+  }
+
+  function handleAddComboInsumo(e) {
+    e.preventDefault()
+    setComboInsumoError(null)
+    if (!comboInsumoSelId) {
+      setComboInsumoError('Selecione um insumo.')
+      return
+    }
+    const q = Number(comboInsumoQty)
+    if (!Number.isFinite(q) || q <= 0) {
+      setComboInsumoError('Quantidade deve ser maior que zero.')
+      return
+    }
+    setComboInsumoSubmitting(true)
+    api
+      .post(`/produtos/${produtoId}/combo-insumos`, { insumoId: Number(comboInsumoSelId), quantidade: q })
+      .then(() => {
+        setComboInsumoSelId('')
+        setComboInsumoQty('1')
+        setToast({ message: 'Insumo adicionado ao combo.', type: 'success' })
+        return reload()
+      })
+      .catch((err) =>
+        setComboInsumoError(err?.response?.data?.error ?? err?.message ?? 'Erro ao adicionar insumo.')
+      )
+      .finally(() => setComboInsumoSubmitting(false))
+  }
+
+  function handleSaveComboInsumo(itemId) {
+    const q = Number(editComboInsumoQty)
+    if (!Number.isFinite(q) || q <= 0) {
+      setComboInsumoError('Quantidade deve ser maior que zero.')
+      return
+    }
+    setComboInsumoError(null)
+    api
+      .put(`/produtos/${produtoId}/combo-insumos/${itemId}`, { quantidade: q })
+      .then(() => {
+        setEditComboInsumoId(null)
+        setEditComboInsumoQty('')
+        return reload()
+      })
+      .catch((err) =>
+        setComboInsumoError(err?.response?.data?.error ?? err?.message ?? 'Erro ao atualizar insumo.')
+      )
+  }
+
+  function handleRemoveComboInsumo(itemId) {
+    setComboInsumoError(null)
+    api
+      .delete(`/produtos/${produtoId}/combo-insumos/${itemId}`)
+      .then(() => {
+        setToast({ message: 'Insumo removido do combo.', type: 'success' })
+        return reload()
+      })
+      .catch((err) =>
+        setComboInsumoError(err?.response?.data?.error ?? err?.message ?? 'Erro ao remover insumo.')
+      )
+  }
+
   const status = analise?.statusCmv
   // Badge do cabeçalho do modal segue a saúde geral; o card "CMV do Produto"
   // continua colorido pelo statusCmv
@@ -1624,6 +1837,9 @@ function FichaModal({ produtoId, onClose, onChanged }) {
     (p) => (p.tipoProduto ?? 'PRODUTO') !== 'COMBO' && p.id !== produtoId
   )
   const comboItensResumo = analise?.comboItensResumo ?? []
+  const comboInsumosResumo = analise?.comboInsumosResumo ?? []
+  // Insumos elegíveis como custo adicional do combo: insumos ativos do cadastro
+  const elegiveisInsumosCombo = insumos.filter((i) => i.ativo !== false)
 
   const insumoSelecionado = insumos.find((x) => String(x.id) === formInsumoId)
   const insumoSelUnidade = insumoSelecionado
@@ -1730,6 +1946,10 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                     {dadosSaving ? 'Salvando…' : 'Salvar dados'}
                   </button>
                 </div>
+                <InteligenciaCardapioFields
+                  form={dadosForm}
+                  onChange={(patch) => setDadosForm({ ...dadosForm, ...patch })}
+                />
                 {dadosError && (
                   <div className="alert alert-red" style={{ marginTop: 12, marginBottom: 0 }}>
                     <div className="alert-msg clr-red">{dadosError}</div>
@@ -1849,6 +2069,7 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                             <th>Qtd</th>
                             <th>Preço unit.</th>
                             <th>Custo unit.</th>
+                            <th>Emb. individual</th>
                             <th>Total venda</th>
                             <th>Total custo</th>
                             <th style={{ textAlign: 'right' }}>Ações</th>
@@ -1880,6 +2101,27 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                               </td>
                               <td>{brl(item.precoVendaUnitario)}</td>
                               <td>{brl(item.custoRealUnitario)}</td>
+                              <td>
+                                {item.ehProduto ? (
+                                  <label
+                                    style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#666', cursor: 'pointer' }}
+                                    title="Quando marcado, inclui a embalagem individual do produto no custo do combo"
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={!!item.incluirEmbalagemIndividual}
+                                      disabled={togglandoEmbalagemId === item.id}
+                                      onChange={() => handleToggleEmbalagem(item)}
+                                    />
+                                    Incluir
+                                    {item.custoEmbalagemUnitario > 0 && (
+                                      <span className="clr-muted">({brl(item.custoEmbalagemUnitario)})</span>
+                                    )}
+                                  </label>
+                                ) : (
+                                  <span className="clr-muted">—</span>
+                                )}
+                              </td>
                               <td>{brl(item.totalVenda)}</td>
                               <td>{brl(item.totalCusto)}</td>
                               <td style={{ textAlign: 'right' }}>
@@ -1907,6 +2149,123 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                                         Editar
                                       </button>
                                       <button type="button" className="btn btn-danger" onClick={() => handleRemoveComboItem(item.id)}>
+                                        Remover
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                {/* ===== Custos adicionais do combo: box, sacola, embalagem especial ===== */}
+                <div className="section-title">Custos Adicionais do Combo</div>
+                <div className="card">
+                  <div style={{ fontSize: 11.5, color: '#999', marginBottom: 12 }}>
+                    Insumos usados só no combo (box única, sacola, embalagem especial, brinde).
+                    Por padrão, as embalagens individuais dos produtos não entram no custo do combo.
+                  </div>
+                  <form onSubmit={handleAddComboInsumo}>
+                    <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                      <div className="form-group" style={{ marginBottom: 0, flex: 2, minWidth: 220 }}>
+                        <label className="form-label">Insumo</label>
+                        <InsumoAutocomplete
+                          insumos={elegiveisInsumosCombo}
+                          value={comboInsumoSelId}
+                          onChange={setComboInsumoSelId}
+                          placeholder="Digite para buscar um insumo..."
+                          getOptionLabel={(i) => `${i.nome} — ${brl(i.custoUnitario)}/${i.unidade}`}
+                        />
+                      </div>
+                      <div className="form-group" style={{ marginBottom: 0, flex: 0.6, minWidth: 90 }}>
+                        <label className="form-label">Quantidade</label>
+                        <input
+                          className="form-input"
+                          type="number"
+                          min="0"
+                          step="0.5"
+                          value={comboInsumoQty}
+                          onChange={(e) => setComboInsumoQty(e.target.value)}
+                        />
+                      </div>
+                      <button type="submit" className="btn btn-primary" disabled={comboInsumoSubmitting}>
+                        {comboInsumoSubmitting ? 'Adicionando…' : 'Adicionar insumo'}
+                      </button>
+                    </div>
+                    {comboInsumoError && (
+                      <div className="alert alert-red" style={{ marginTop: 12, marginBottom: 0 }}>
+                        <div className="alert-msg clr-red">{comboInsumoError}</div>
+                      </div>
+                    )}
+                  </form>
+
+                  {comboInsumosResumo.length === 0 ? (
+                    <div className="empty-state" style={{ padding: '24px 16px' }}>
+                      Nenhum custo adicional. Adicione a embalagem própria do combo acima, se houver.
+                    </div>
+                  ) : (
+                    <div className="table-card" style={{ marginTop: 14 }}>
+                      <table className="hb-table hb-table-compact">
+                        <thead>
+                          <tr>
+                            <th>Insumo</th>
+                            <th>Qtd</th>
+                            <th>Custo unit.</th>
+                            <th>Custo total</th>
+                            <th style={{ textAlign: 'right' }}>Ações</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {comboInsumosResumo.map((ci) => (
+                            <tr key={ci.id}>
+                              <td style={{ fontWeight: 500, color: '#111' }}>{ci.nome}</td>
+                              <td>
+                                {editComboInsumoId === ci.id ? (
+                                  <input
+                                    className="form-input"
+                                    style={{ padding: '5px 8px', fontSize: 13, width: 70 }}
+                                    type="number"
+                                    min="0"
+                                    step="0.5"
+                                    value={editComboInsumoQty}
+                                    onChange={(e) => setEditComboInsumoQty(e.target.value)}
+                                  />
+                                ) : (
+                                  <strong>{num(ci.quantidade)} {ci.unidade}</strong>
+                                )}
+                              </td>
+                              <td>{brl(ci.custoUnitario)}</td>
+                              <td>{brl(ci.custoTotal)}</td>
+                              <td style={{ textAlign: 'right' }}>
+                                <div style={{ display: 'inline-flex', gap: 6 }}>
+                                  {editComboInsumoId === ci.id ? (
+                                    <>
+                                      <button type="button" className="btn btn-primary" onClick={() => handleSaveComboInsumo(ci.id)}>
+                                        Salvar
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="btn btn-secondary"
+                                        onClick={() => { setEditComboInsumoId(null); setEditComboInsumoQty('') }}
+                                      >
+                                        Cancelar
+                                      </button>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <button
+                                        type="button"
+                                        className="btn btn-secondary"
+                                        onClick={() => { setEditComboInsumoId(ci.id); setEditComboInsumoQty(String(ci.quantidade)) }}
+                                      >
+                                        Editar
+                                      </button>
+                                      <button type="button" className="btn btn-danger" onClick={() => handleRemoveComboInsumo(ci.id)}>
                                         Remover
                                       </button>
                                     </>
@@ -1954,7 +2313,7 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                   <Card
                     title="Custo Total do Combo"
                     value={comboItensResumo.length === 0 ? '—' : brl(analise?.custoTotalCombo)}
-                    hint="Soma do custo real dos itens"
+                    hint="Itens (sem embalagem individual) + adicionais do combo"
                   />
                   <Card
                     title="CMV do Combo"
@@ -1985,6 +2344,43 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                     }
                   />
                 </div>
+
+                {/* Composição discreta do custo total do combo */}
+                {comboItensResumo.length > 0 && (
+                  <div
+                    style={{
+                      marginTop: 4,
+                      padding: '12px 14px',
+                      background: '#fafafa',
+                      border: '1px solid #f0f0f0',
+                      borderRadius: 10,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 6
+                    }}
+                  >
+                    <div style={metricRowStyle}>
+                      <span style={metricLabelStyle}>Custo dos itens do combo</span>
+                      <span>{brl(analise?.custoItensCombo)}</span>
+                    </div>
+                    {Number(analise?.embalagensDesconsideradas) > 0 && (
+                      <div style={metricRowStyle}>
+                        <span style={metricLabelStyle}>Embalagens individuais desconsideradas</span>
+                        <span className="clr-muted">− {brl(analise?.embalagensDesconsideradas)}</span>
+                      </div>
+                    )}
+                    {Number(analise?.custoAdicionaisCombo) > 0 && (
+                      <div style={metricRowStyle}>
+                        <span style={metricLabelStyle}>Custos adicionais do combo</span>
+                        <span className="clr-orange">+ {brl(analise?.custoAdicionaisCombo)}</span>
+                      </div>
+                    )}
+                    <div style={{ ...metricRowStyle, borderBottom: 'none', fontWeight: 600 }}>
+                      <span style={{ ...metricLabelStyle, color: '#111' }}>Custo total real do combo</span>
+                      <span>{brl(analise?.custoTotalCombo)}</span>
+                    </div>
+                  </div>
+                )}
                 {analise?.mensagemDiagnostico && (
                   <div
                     className={
@@ -2073,6 +2469,10 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                     {dadosSaving ? 'Salvando…' : 'Salvar dados do produto'}
                   </button>
                 </div>
+                <InteligenciaCardapioFields
+                  form={dadosForm}
+                  onChange={(patch) => setDadosForm({ ...dadosForm, ...patch })}
+                />
                 {dadosError && (
                   <div className="alert alert-red" style={{ marginTop: 12, marginBottom: 0 }}>
                     <div className="alert-msg clr-red">{dadosError}</div>

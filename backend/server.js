@@ -690,6 +690,8 @@ const TIPOS_BEBIDA_ANALISE = ['COMMODITY', 'AUTORAL'];
 // e combos entram no ranking por padrão. Campos do body sobrescrevem o default.
 function camposEstrategicosCreate(tipoFinal, body) {
   const ancora = body.produtoAncora === true;
+  // Produto isca: aplicável a produto/combo (oculto para bebida)
+  const isca = body.produtoIsca === true;
   let incluir;
   if (typeof body.incluirAnaliseEstrategica === 'boolean') {
     incluir = body.incluirAnaliseEstrategica;
@@ -704,7 +706,12 @@ function camposEstrategicosCreate(tipoFinal, body) {
       tipoBebida = body.tipoBebidaAnalise;
     }
   }
-  return { produtoAncora: ancora, incluirAnaliseEstrategica: incluir, tipoBebidaAnalise: tipoBebida };
+  return {
+    produtoAncora: ancora,
+    produtoIsca: isca,
+    incluirAnaliseEstrategica: incluir,
+    tipoBebidaAnalise: tipoBebida
+  };
 }
 
 app.post('/api/produtos', async (req, res) => {
@@ -776,7 +783,7 @@ app.put('/api/produtos/:id', async (req, res) => {
 
     const {
       nome, descricao, precoVenda, ativo, tipoProduto, custoDireto,
-      produtoAncora, incluirAnaliseEstrategica, tipoBebidaAnalise
+      produtoAncora, produtoIsca, incluirAnaliseEstrategica, tipoBebidaAnalise
     } = req.body ?? {};
     const data = {};
 
@@ -825,6 +832,12 @@ app.put('/api/produtos/:id', async (req, res) => {
         return res.status(400).json({ error: 'produtoAncora inválido' });
       }
       data.produtoAncora = produtoAncora;
+    }
+    if (produtoIsca !== undefined) {
+      if (typeof produtoIsca !== 'boolean') {
+        return res.status(400).json({ error: 'produtoIsca inválido' });
+      }
+      data.produtoIsca = produtoIsca;
     }
     if (incluirAnaliseEstrategica !== undefined) {
       if (typeof incluirAnaliseEstrategica !== 'boolean') {
@@ -886,7 +899,7 @@ app.post('/api/produtos/:id/duplicar', async (req, res) => {
 
     const original = await prisma.produto.findUnique({
       where: { id },
-      include: { fichaTecnica: true, comboItens: true }
+      include: { fichaTecnica: true, comboItens: true, comboInsumos: true }
     });
     if (!original || !original.ativo) {
       return res.status(404).json({ error: 'Produto não encontrado' });
@@ -905,6 +918,7 @@ app.post('/api/produtos/:id/duplicar', async (req, res) => {
           ativo: true,
           // Preserva a configuração estratégica do original
           produtoAncora: original.produtoAncora,
+          produtoIsca: original.produtoIsca,
           incluirAnaliseEstrategica: original.incluirAnaliseEstrategica,
           tipoBebidaAnalise: original.tipoBebidaAnalise
         }
@@ -930,7 +944,21 @@ app.post('/api/produtos/:id/duplicar', async (req, res) => {
           data: original.comboItens.map((item) => ({
             comboId: criado.id,
             produtoId: item.produtoId,
-            quantidade: item.quantidade
+            quantidade: item.quantidade,
+            // Preserva a configuração de embalagem individual de cada item
+            incluirEmbalagemIndividual: item.incluirEmbalagemIndividual
+          }))
+        });
+      }
+
+      // Insumos adicionais do combo (box, sacola...) — cópia independente
+      if (tipo === 'COMBO' && original.comboInsumos.length > 0) {
+        await tx.comboInsumo.createMany({
+          data: original.comboInsumos.map((ci) => ({
+            comboId: criado.id,
+            insumoId: ci.insumoId,
+            quantidade: ci.quantidade,
+            modoUsoQuantidade: ci.modoUsoQuantidade
           }))
         });
       }
@@ -951,34 +979,86 @@ app.post('/api/produtos/:id/duplicar', async (req, res) => {
 const COMBO_ITEM_INCLUDE = {
   produto: { include: { fichaTecnica: { include: { insumo: { include: { receitaProducao: true } } } } } }
 };
+// Insumos adicionais do combo: insumo + receita própria (mesma base da ficha)
+const COMBO_INSUMO_INCLUDE = { insumo: { include: { receitaProducao: true } } };
 
-// Custo real de um item filho do combo: PRODUTO usa o custo total real da
-// ficha técnica; BEBIDA usa o custo direto de compra (0 quando não informado)
-function custoRealItemCombo(produto) {
+// Custo da embalagem individual de um produto (itens da ficha com tipoUso=EMBALAGEM).
+// Usado para descontar do custo do produto quando ele entra num combo.
+function custoEmbalagemFicha(fichaTecnica) {
+  const totals = computeFichaTotals(fichaTecnica ?? []);
+  return totals.itens
+    .filter((i) => i.tipoUso === 'EMBALAGEM')
+    .reduce((s, i) => s + i.custoAplicado, 0);
+}
+
+// Custo unitário de um item filho do combo.
+// BEBIDA: custo direto de compra (0 quando não informado) — incluirEmbalagem não se aplica.
+// PRODUTO: custo total real da ficha; por padrão (incluirEmbalagem=false) desconta
+// a embalagem individual (tipoUso=EMBALAGEM), pois o combo usa embalagem própria.
+function custoRealItemCombo(produto, incluirEmbalagem) {
   if ((produto.tipoProduto ?? 'PRODUTO') === 'BEBIDA') {
     return produto.custoDireto === null || produto.custoDireto === undefined
       ? 0
       : Number(produto.custoDireto);
   }
-  return computeFichaTotals(produto.fichaTecnica ?? []).custoTotalFicha;
+  const total = computeFichaTotals(produto.fichaTecnica ?? []).custoTotalFicha;
+  if (incluirEmbalagem) return total;
+  return total - custoEmbalagemFicha(produto.fichaTecnica ?? []);
 }
 
 function comboItemOut(item) {
   const round2 = (n) => Number(n.toFixed(2));
   const qtd = Number(item.quantidade);
   const precoUnit = Number(item.produto.precoVenda);
-  const custoUnit = custoRealItemCombo(item.produto);
+  const ehProduto = (item.produto.tipoProduto ?? 'PRODUTO') !== 'BEBIDA';
+  const incluirEmbalagem = !!item.incluirEmbalagemIndividual;
+  const custoUnit = custoRealItemCombo(item.produto, incluirEmbalagem);
+  // Embalagem individual unitária (sempre informativa; só é removida quando produto e !incluir)
+  const embalagemUnit = ehProduto ? custoEmbalagemFicha(item.produto.fichaTecnica ?? []) : 0;
+  const embalagemRemovidaUnit = ehProduto && !incluirEmbalagem ? embalagemUnit : 0;
   return {
     id: item.id,
     comboId: item.comboId,
     produtoId: item.produtoId,
     nome: item.produto.nome,
     tipoProduto: item.produto.tipoProduto ?? 'PRODUTO',
+    ehProduto,
     quantidade: qtd,
+    incluirEmbalagemIndividual: incluirEmbalagem,
     precoVendaUnitario: round2(precoUnit),
     custoRealUnitario: round2(custoUnit),
+    custoEmbalagemUnitario: round2(embalagemUnit),
+    custoEmbalagemRemovido: round2(embalagemRemovidaUnit * qtd),
     totalVenda: round2(precoUnit * qtd),
     totalCusto: round2(custoUnit * qtd)
+  };
+}
+
+// Custo bruto de um insumo adicional do combo (mesma base da ficha técnica, sem
+// rateio): PORCAO usa custo por porção da receita; BASE converte pela unidade.
+function custoComboInsumoBruto(ci) {
+  if (ci.modoUsoQuantidade === 'PORCAO') {
+    return Number(ci.quantidade) * (custoPorPorcaoInsumo(ci.insumo) ?? 0);
+  }
+  return quantidadeBase(ci.quantidade, ci.insumo.unidade) * Number(ci.insumo.custoUnitario);
+}
+
+function comboInsumoOut(ci) {
+  const round2 = (n) => Number(n.toFixed(2));
+  const qtd = Number(ci.quantidade);
+  const custoTotal = custoComboInsumoBruto(ci);
+  const custoUnitario = qtd > 0 ? custoTotal / qtd : custoTotal;
+  return {
+    id: ci.id,
+    comboId: ci.comboId,
+    insumoId: ci.insumoId,
+    nome: ci.insumo.nome,
+    unidade: ci.insumo.unidade,
+    tipoInsumo: ci.insumo.tipo,
+    quantidade: qtd,
+    modoUsoQuantidade: ci.modoUsoQuantidade ?? 'BASE',
+    custoUnitario: round2(custoUnitario),
+    custoTotal: round2(custoTotal)
   };
 }
 
@@ -1065,13 +1145,26 @@ app.put('/api/produtos/:id/combo-itens/:itemId', async (req, res) => {
     if (!existente || existente.comboId !== comboId) {
       return res.status(404).json({ error: 'Item não encontrado neste combo' });
     }
-    const { quantidade } = req.body ?? {};
-    if (quantidade === undefined || quantidade === null || isNaN(Number(quantidade)) || Number(quantidade) <= 0) {
-      return res.status(400).json({ error: 'quantidade deve ser maior que zero' });
+    const { quantidade, incluirEmbalagemIndividual } = req.body ?? {};
+    const data = {};
+    if (quantidade !== undefined) {
+      if (quantidade === null || isNaN(Number(quantidade)) || Number(quantidade) <= 0) {
+        return res.status(400).json({ error: 'quantidade deve ser maior que zero' });
+      }
+      data.quantidade = Number(quantidade);
+    }
+    if (incluirEmbalagemIndividual !== undefined) {
+      if (typeof incluirEmbalagemIndividual !== 'boolean') {
+        return res.status(400).json({ error: 'incluirEmbalagemIndividual inválido' });
+      }
+      data.incluirEmbalagemIndividual = incluirEmbalagemIndividual;
+    }
+    if (Object.keys(data).length === 0) {
+      return res.status(400).json({ error: 'Nada para atualizar' });
     }
     const item = await prisma.comboItem.update({
       where: { id: itemId },
-      data: { quantidade: Number(quantidade) },
+      data,
       include: COMBO_ITEM_INCLUDE
     });
     res.json(comboItemOut(item));
@@ -1096,6 +1189,128 @@ app.delete('/api/produtos/:id/combo-itens/:itemId', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erro interno ao remover item do combo' });
+  }
+});
+
+// ===== Insumos adicionais do Combo (box, sacola, embalagem especial) =====
+const MODOS_USO_QTD = ['BASE', 'PORCAO'];
+
+app.get('/api/produtos/:id/combo-insumos', async (req, res) => {
+  try {
+    const { error, status } = await findComboAtivo(Number(req.params.id));
+    if (error) return res.status(status).json({ error });
+    const itens = await prisma.comboInsumo.findMany({
+      where: { comboId: Number(req.params.id) },
+      include: COMBO_INSUMO_INCLUDE,
+      orderBy: { id: 'asc' }
+    });
+    res.json(itens.map(comboInsumoOut));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro interno ao listar insumos do combo' });
+  }
+});
+
+app.post('/api/produtos/:id/combo-insumos', async (req, res) => {
+  try {
+    const comboId = Number(req.params.id);
+    const { error, status } = await findComboAtivo(comboId);
+    if (error) return res.status(status).json({ error });
+
+    const { insumoId, quantidade, modoUsoQuantidade } = req.body ?? {};
+    if (!Number.isInteger(Number(insumoId)) || Number(insumoId) <= 0) {
+      return res.status(400).json({ error: 'insumoId inválido' });
+    }
+    if (quantidade === undefined || quantidade === null || isNaN(Number(quantidade)) || Number(quantidade) <= 0) {
+      return res.status(400).json({ error: 'quantidade é obrigatória e deve ser maior que zero' });
+    }
+    const modo = modoUsoQuantidade ?? 'BASE';
+    if (!MODOS_USO_QTD.includes(modo)) {
+      return res.status(400).json({ error: 'modoUsoQuantidade deve ser BASE ou PORCAO' });
+    }
+    const insumo = await prisma.insumo.findUnique({ where: { id: Number(insumoId) } });
+    if (!insumo || !insumo.ativo) {
+      return res.status(404).json({ error: 'Insumo não encontrado ou inativo' });
+    }
+
+    // Mesmo insumo adicionado de novo: soma a quantidade (consolidado por insumo)
+    const existente = await prisma.comboInsumo.findUnique({
+      where: { comboId_insumoId: { comboId, insumoId: Number(insumoId) } }
+    });
+    const item = existente
+      ? await prisma.comboInsumo.update({
+          where: { id: existente.id },
+          data: { quantidade: Number(existente.quantidade) + Number(quantidade) },
+          include: COMBO_INSUMO_INCLUDE
+        })
+      : await prisma.comboInsumo.create({
+          data: { comboId, insumoId: Number(insumoId), quantidade: Number(quantidade), modoUsoQuantidade: modo },
+          include: COMBO_INSUMO_INCLUDE
+        });
+
+    res.status(201).json(comboInsumoOut(item));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro interno ao adicionar insumo ao combo' });
+  }
+});
+
+app.put('/api/produtos/:id/combo-insumos/:itemId', async (req, res) => {
+  try {
+    const comboId = Number(req.params.id);
+    const itemId = Number(req.params.itemId);
+    const { error, status } = await findComboAtivo(comboId);
+    if (error) return res.status(status).json({ error });
+
+    const existente = await prisma.comboInsumo.findUnique({ where: { id: itemId } });
+    if (!existente || existente.comboId !== comboId) {
+      return res.status(404).json({ error: 'Insumo não encontrado neste combo' });
+    }
+    const { quantidade, modoUsoQuantidade } = req.body ?? {};
+    const data = {};
+    if (quantidade !== undefined) {
+      if (quantidade === null || isNaN(Number(quantidade)) || Number(quantidade) <= 0) {
+        return res.status(400).json({ error: 'quantidade deve ser maior que zero' });
+      }
+      data.quantidade = Number(quantidade);
+    }
+    if (modoUsoQuantidade !== undefined) {
+      if (!MODOS_USO_QTD.includes(modoUsoQuantidade)) {
+        return res.status(400).json({ error: 'modoUsoQuantidade deve ser BASE ou PORCAO' });
+      }
+      data.modoUsoQuantidade = modoUsoQuantidade;
+    }
+    if (Object.keys(data).length === 0) {
+      return res.status(400).json({ error: 'Nada para atualizar' });
+    }
+    const item = await prisma.comboInsumo.update({
+      where: { id: itemId },
+      data,
+      include: COMBO_INSUMO_INCLUDE
+    });
+    res.json(comboInsumoOut(item));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro interno ao atualizar insumo do combo' });
+  }
+});
+
+// Remove apenas o vínculo insumo×combo; o Insumo do cadastro geral permanece.
+app.delete('/api/produtos/:id/combo-insumos/:itemId', async (req, res) => {
+  try {
+    const comboId = Number(req.params.id);
+    const itemId = Number(req.params.itemId);
+    const { error, status } = await findComboAtivo(comboId);
+    if (error) return res.status(status).json({ error });
+    const existente = await prisma.comboInsumo.findUnique({ where: { id: itemId } });
+    if (!existente || existente.comboId !== comboId) {
+      return res.status(404).json({ error: 'Insumo não encontrado neste combo' });
+    }
+    await prisma.comboInsumo.delete({ where: { id: itemId } });
+    res.json({ id: itemId, deleted: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro interno ao remover insumo do combo' });
   }
 });
 
@@ -1698,6 +1913,11 @@ app.get('/api/produtos/:id/analise', async (req, res) => {
         include: COMBO_ITEM_INCLUDE,
         orderBy: { id: 'asc' }
       });
+      const comboInsumos = await prisma.comboInsumo.findMany({
+        where: { comboId: id },
+        include: COMBO_INSUMO_INCLUDE,
+        orderBy: { id: 'asc' }
+      });
       const precificacaoCombo = computePrecificacao(
         { custoComMargem: 0, custoEmbutido: 0 },
         precoVenda,
@@ -1705,9 +1925,14 @@ app.get('/api/produtos/:id/analise', async (req, res) => {
       );
 
       const comboItensResumo = comboItens.map(comboItemOut);
+      const comboInsumosResumo = comboInsumos.map(comboInsumoOut);
       const temItens = comboItensResumo.length > 0;
       const valorItensSeparados = comboItensResumo.reduce((s, i) => s + i.totalVenda, 0);
-      const custoTotalCombo = comboItensResumo.reduce((s, i) => s + i.totalCusto, 0);
+      // Custo dos itens (já sem embalagem individual por padrão) + insumos adicionais do combo
+      const custoItensCombo = comboItensResumo.reduce((s, i) => s + i.totalCusto, 0);
+      const custoAdicionaisCombo = comboInsumosResumo.reduce((s, i) => s + i.custoTotal, 0);
+      const embalagensDesconsideradas = comboItensResumo.reduce((s, i) => s + i.custoEmbalagemRemovido, 0);
+      const custoTotalCombo = custoItensCombo + custoAdicionaisCombo;
 
       const descontoCombo = temItens ? valorItensSeparados - precoVenda : null;
       const percentualDescontoCombo =
@@ -1760,7 +1985,11 @@ app.get('/api/produtos/:id/analise', async (req, res) => {
         // Campos próprios do combo
         quantidadeItensCombo: comboItensResumo.length,
         comboItensResumo,
+        comboInsumosResumo,
         valorItensSeparados: round2(valorItensSeparados),
+        custoItensCombo: round2(custoItensCombo),
+        custoAdicionaisCombo: round2(custoAdicionaisCombo),
+        embalagensDesconsideradas: round2(embalagensDesconsideradas),
         custoTotalCombo: round2(custoTotalCombo),
         descontoCombo: descontoCombo === null ? null : round2(descontoCombo),
         percentualDescontoCombo:

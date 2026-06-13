@@ -242,6 +242,74 @@ a { text-decoration: none; color: inherit; }
 .badge-gray   { background: #f5f5f5; color: #888; }
 .badge-blue   { background: #eff6ff; color: #2563eb; }
 
+/* Badges estratégicas (inteligência do cardápio) — sem o ponto do badge de
+   status, tons discretos para não competir com o badge de saúde/precificação */
+.badge-strategic {
+  display: inline-flex; align-items: center;
+  font-size: 9px; font-weight: 700;
+  padding: 2px 7px; border-radius: 6px;
+  text-transform: uppercase; letter-spacing: 0.5px;
+  border: 1px solid transparent;
+}
+.badge-assinatura { background: #f2f1f8; color: #5b5677; border-color: #e6e4f0; }
+.badge-isca       { background: #fff5ec; color: #d97515; border-color: #fbe3cb; }
+.badge-autoral    { background: #eef0fc; color: #4f56cc; border-color: #e0e3f7; }
+
+/* Seção "Inteligência do cardápio" — seletores estratégicos no modal */
+.intel-section { margin-top: 16px; padding-top: 14px; border-top: 1px solid #f0f0f0; }
+.intel-head {
+  font-size: 11px; font-weight: 700; color: #9a9a9a;
+  text-transform: uppercase; letter-spacing: 0.6px;
+}
+.intel-sub { font-size: 11.5px; color: #aaa; margin: 4px 0 12px; line-height: 1.5; }
+.intel-options {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  gap: 8px; margin-bottom: 10px;
+}
+.intel-options-2 { grid-template-columns: repeat(2, 1fr); }
+.intel-option {
+  text-align: left; border: 1px solid #e8e8e8; background: #fff;
+  border-radius: 10px; padding: 10px 12px; cursor: pointer;
+  transition: border-color .12s, background .12s, box-shadow .12s;
+}
+.intel-option:hover { border-color: #d4d4d4; }
+.intel-option.active {
+  border-color: #ea580c; background: #fff8f2;
+  box-shadow: 0 0 0 1px #ea580c inset;
+}
+.intel-option-title {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  font-size: 12.5px; font-weight: 600; color: #333;
+}
+.intel-option.active .intel-option-title { color: #c2410c; }
+.intel-option-check { color: #ea580c; font-weight: 700; font-size: 13px; }
+.intel-option-desc { font-size: 11px; color: #999; margin-top: 4px; line-height: 1.4; }
+
+.intel-switch-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  width: 100%; text-align: left;
+  border: 1px solid #e8e8e8; background: #fff;
+  border-radius: 10px; padding: 10px 12px; cursor: pointer;
+}
+.intel-switch-row:hover { border-color: #d4d4d4; }
+.intel-switch-label { display: block; font-size: 12.5px; font-weight: 600; color: #333; }
+.intel-switch-desc { display: block; font-size: 11px; color: #999; margin-top: 2px; }
+.intel-switch {
+  width: 38px; height: 22px; border-radius: 100px; background: #d8d8d8;
+  position: relative; flex-shrink: 0; transition: background .15s;
+}
+.intel-switch::after {
+  content: ''; position: absolute; width: 18px; height: 18px; border-radius: 50%;
+  background: #fff; top: 2px; left: 2px; transition: left .15s;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .2);
+}
+.intel-switch.on { background: #ea580c; }
+.intel-switch.on::after { left: 18px; }
+
+@media (max-width: 640px) {
+  .intel-options, .intel-options-2 { grid-template-columns: 1fr; }
+}
+
 /* Cores de valor */
 .clr-green  { color: #16a34a; }
 .clr-yellow { color: #d97706; }
