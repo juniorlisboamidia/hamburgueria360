@@ -15,6 +15,11 @@ const gestao = [
   { to: '/calc-frete', label: 'Calc. Frete' }
 ]
 
+const inteligencia = [
+  { to: '/analise-vendas', label: 'Análise de Vendas' },
+  { to: '/inteligencia-compras', label: 'Inteligência de Compras' }
+]
+
 function itemClass({ isActive }) {
   return 'sidebar-item' + (isActive ? ' active' : '')
 }
@@ -47,6 +52,13 @@ export default function Sidebar() {
 
         <div className="sidebar-section-label">Gestão</div>
         {gestao.map((item) => (
+          <NavLink key={item.to} to={item.to} className={itemClass}>
+            {item.label}
+          </NavLink>
+        ))}
+
+        <div className="sidebar-section-label">Inteligência</div>
+        {inteligencia.map((item) => (
           <NavLink key={item.to} to={item.to} className={itemClass}>
             {item.label}
           </NavLink>

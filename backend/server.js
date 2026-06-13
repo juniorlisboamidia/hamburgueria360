@@ -683,6 +683,29 @@ app.get('/api/produtos', async (req, res) => {
 });
 
 const TIPOS_PRODUTO = ['PRODUTO', 'BEBIDA', 'COMBO'];
+const TIPOS_BEBIDA_ANALISE = ['COMMODITY', 'AUTORAL'];
+
+// Defaults estratégicos por tipo (V0 da Inteligência do cardápio): bebidas
+// nascem fora do ranking estratégico e classificadas como COMMODITY; produtos
+// e combos entram no ranking por padrão. Campos do body sobrescrevem o default.
+function camposEstrategicosCreate(tipoFinal, body) {
+  const ancora = body.produtoAncora === true;
+  let incluir;
+  if (typeof body.incluirAnaliseEstrategica === 'boolean') {
+    incluir = body.incluirAnaliseEstrategica;
+  } else {
+    incluir = tipoFinal === 'BEBIDA' ? false : true;
+  }
+  let tipoBebida = null;
+  if (tipoFinal === 'BEBIDA') {
+    if (body.tipoBebidaAnalise === undefined || body.tipoBebidaAnalise === null || body.tipoBebidaAnalise === '') {
+      tipoBebida = 'COMMODITY';
+    } else {
+      tipoBebida = body.tipoBebidaAnalise;
+    }
+  }
+  return { produtoAncora: ancora, incluirAnaliseEstrategica: incluir, tipoBebidaAnalise: tipoBebida };
+}
 
 app.post('/api/produtos', async (req, res) => {
   try {
@@ -706,6 +729,16 @@ app.post('/api/produtos', async (req, res) => {
         return res.status(400).json({ error: 'custoDireto deve ser numérico e maior ou igual a zero' });
       }
     }
+    const body = req.body ?? {};
+    if (
+      tipoFinal === 'BEBIDA' &&
+      body.tipoBebidaAnalise !== undefined &&
+      body.tipoBebidaAnalise !== null &&
+      body.tipoBebidaAnalise !== '' &&
+      !TIPOS_BEBIDA_ANALISE.includes(body.tipoBebidaAnalise)
+    ) {
+      return res.status(400).json({ error: 'tipoBebidaAnalise deve ser COMMODITY ou AUTORAL' });
+    }
 
     const produto = await prisma.produto.create({
       data: {
@@ -717,7 +750,8 @@ app.post('/api/produtos', async (req, res) => {
           custoDireto === undefined || custoDireto === null || custoDireto === ''
             ? null
             : Number(custoDireto),
-        ativo: true
+        ativo: true,
+        ...camposEstrategicosCreate(tipoFinal, body)
       }
     });
 
@@ -740,7 +774,10 @@ app.put('/api/produtos/:id', async (req, res) => {
       return res.status(404).json({ error: 'Produto não encontrado' });
     }
 
-    const { nome, descricao, precoVenda, ativo, tipoProduto, custoDireto } = req.body ?? {};
+    const {
+      nome, descricao, precoVenda, ativo, tipoProduto, custoDireto,
+      produtoAncora, incluirAnaliseEstrategica, tipoBebidaAnalise
+    } = req.body ?? {};
     const data = {};
 
     if (nome !== undefined) {
@@ -782,6 +819,27 @@ app.put('/api/produtos/:id', async (req, res) => {
         return res.status(400).json({ error: 'ativo inválido' });
       }
       data.ativo = ativo;
+    }
+    if (produtoAncora !== undefined) {
+      if (typeof produtoAncora !== 'boolean') {
+        return res.status(400).json({ error: 'produtoAncora inválido' });
+      }
+      data.produtoAncora = produtoAncora;
+    }
+    if (incluirAnaliseEstrategica !== undefined) {
+      if (typeof incluirAnaliseEstrategica !== 'boolean') {
+        return res.status(400).json({ error: 'incluirAnaliseEstrategica inválido' });
+      }
+      data.incluirAnaliseEstrategica = incluirAnaliseEstrategica;
+    }
+    if (tipoBebidaAnalise !== undefined) {
+      if (tipoBebidaAnalise === null || tipoBebidaAnalise === '') {
+        data.tipoBebidaAnalise = null;
+      } else if (!TIPOS_BEBIDA_ANALISE.includes(tipoBebidaAnalise)) {
+        return res.status(400).json({ error: 'tipoBebidaAnalise deve ser COMMODITY ou AUTORAL' });
+      } else {
+        data.tipoBebidaAnalise = tipoBebidaAnalise;
+      }
     }
 
     const updated = await prisma.produto.update({ where: { id }, data });
@@ -844,7 +902,11 @@ app.post('/api/produtos/:id/duplicar', async (req, res) => {
           precoVenda: original.precoVenda,
           tipoProduto: tipo,
           custoDireto: original.custoDireto,
-          ativo: true
+          ativo: true,
+          // Preserva a configuração estratégica do original
+          produtoAncora: original.produtoAncora,
+          incluirAnaliseEstrategica: original.incluirAnaliseEstrategica,
+          tipoBebidaAnalise: original.tipoBebidaAnalise
         }
       });
 

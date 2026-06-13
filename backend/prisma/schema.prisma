@@ -99,6 +99,15 @@ model Produto {
   // Custo de compra para BEBIDA (revenda); PRODUTO usa ficha técnica
   custoDireto  Decimal? @db.Decimal(12, 2)
   ativo        Boolean  @default(true)
+
+  // ===== Inteligência do cardápio (análises estratégicas futuras) =====
+  // Produto assinatura da marca: não é recomendado para remoção automática
+  produtoAncora             Boolean @default(false)
+  // Permite tirar o item do ranking estratégico (bebidas commodity saem por padrão)
+  incluirAnaliseEstrategica Boolean @default(true)
+  // Classificação da bebida na análise: COMMODITY (refri/revenda) ou AUTORAL (da casa)
+  tipoBebidaAnalise         String?
+
   criadoEm     DateTime @default(now())
   atualizadoEm DateTime @updatedAt
 

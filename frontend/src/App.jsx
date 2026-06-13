@@ -10,6 +10,8 @@ import CustosVariaveis from './pages/CustosVariaveis'
 import Faturamento from './pages/Faturamento'
 import PontoEquilibrio from './pages/PontoEquilibrio'
 import Inteligencia from './pages/Inteligencia'
+import AnaliseVendas from './pages/AnaliseVendas'
+import InteligenciaCompras from './pages/InteligenciaCompras'
 import CalcFrete from './pages/CalcFrete'
 
 export default function App() {
@@ -28,6 +30,8 @@ export default function App() {
           <Route path="faturamento" element={<Faturamento />} />
           <Route path="ponto-equilibrio" element={<PontoEquilibrio />} />
           <Route path="inteligencia" element={<Inteligencia />} />
+          <Route path="analise-vendas" element={<AnaliseVendas />} />
+          <Route path="inteligencia-compras" element={<InteligenciaCompras />} />
           <Route path="calc-frete" element={<CalcFrete />} />
         </Route>
       </Routes>

@@ -200,7 +200,19 @@ const CMV_COLOR_CLASS = {
   CRITICO:   'clr-red'
 }
 
-const FORM_BLANK = { nome: '', descricao: '', precoVenda: '', tipoProduto: 'PRODUTO', custoDireto: '' }
+// Defaults estratégicos por tipo (Inteligência do cardápio): bebida nasce fora
+// do ranking e como COMMODITY; produto/combo entram no ranking por padrão
+function estrategiaPadraoPorTipo(tipo) {
+  if (tipo === 'BEBIDA') {
+    return { produtoAncora: false, incluirAnaliseEstrategica: false, tipoBebidaAnalise: 'COMMODITY' }
+  }
+  return { produtoAncora: false, incluirAnaliseEstrategica: true, tipoBebidaAnalise: '' }
+}
+
+const FORM_BLANK = {
+  nome: '', descricao: '', precoVenda: '', tipoProduto: 'PRODUTO', custoDireto: '',
+  ...estrategiaPadraoPorTipo('PRODUTO')
+}
 
 function validateForm({ nome, precoVenda, tipoProduto, custoDireto }) {
   if (!nome || nome.trim() === '') return 'nome é obrigatório'
@@ -218,13 +230,18 @@ function validateForm({ nome, precoVenda, tipoProduto, custoDireto }) {
 }
 
 function payloadFromForm(form) {
+  const tipo = form.tipoProduto ?? 'PRODUTO'
   return {
     nome: form.nome.trim(),
     descricao: form.descricao.trim() === '' ? null : form.descricao.trim(),
     precoVenda: Number(form.precoVenda),
-    tipoProduto: form.tipoProduto ?? 'PRODUTO',
-    custoDireto:
-      form.tipoProduto === 'BEBIDA' && form.custoDireto !== '' ? Number(form.custoDireto) : null
+    tipoProduto: tipo,
+    custoDireto: tipo === 'BEBIDA' && form.custoDireto !== '' ? Number(form.custoDireto) : null,
+    // Inteligência do cardápio: âncora só faz sentido em produto/combo;
+    // tipoBebidaAnalise só em bebida
+    produtoAncora: tipo === 'BEBIDA' ? false : !!form.produtoAncora,
+    incluirAnaliseEstrategica: !!form.incluirAnaliseEstrategica,
+    tipoBebidaAnalise: tipo === 'BEBIDA' ? (form.tipoBebidaAnalise || 'COMMODITY') : null
   }
 }
 
@@ -320,7 +337,7 @@ export default function Produtos() {
 
   // Criação contextual: o card de ação de cada aba abre já com o tipo certo
   function openCreate(tipo = 'PRODUTO') {
-    setCreateForm({ ...FORM_BLANK, tipoProduto: tipo })
+    setCreateForm({ ...FORM_BLANK, tipoProduto: tipo, ...estrategiaPadraoPorTipo(tipo) })
     setCreateError(null)
     setCreateOpen(true)
   }
@@ -482,7 +499,13 @@ export default function Produtos() {
                 <select
                   className="form-input"
                   value={createForm.tipoProduto}
-                  onChange={(e) => setCreateForm({ ...createForm, tipoProduto: e.target.value })}
+                  onChange={(e) =>
+                    setCreateForm({
+                      ...createForm,
+                      tipoProduto: e.target.value,
+                      ...estrategiaPadraoPorTipo(e.target.value)
+                    })
+                  }
                 >
                   <option value="PRODUTO">Produto</option>
                   <option value="BEBIDA">Bebida</option>
@@ -549,6 +572,58 @@ export default function Produtos() {
                   A composição do combo será configurada em uma próxima etapa.
                 </div>
               )}
+
+              {/* Inteligência do cardápio: marcações discretas para análises futuras */}
+              <div
+                style={{
+                  marginTop: 14,
+                  paddingTop: 12,
+                  borderTop: '1px solid #f0f0f0'
+                }}
+              >
+                <div style={{ fontSize: 11, fontWeight: 600, color: '#aaa', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
+                  Inteligência do cardápio
+                </div>
+
+                {createForm.tipoProduto === 'BEBIDA' && (
+                  <div className="form-group" style={{ marginBottom: 10 }}>
+                    <label className="form-label">Tipo de bebida</label>
+                    <select
+                      className="form-input"
+                      value={createForm.tipoBebidaAnalise || 'COMMODITY'}
+                      onChange={(e) => setCreateForm({ ...createForm, tipoBebidaAnalise: e.target.value })}
+                    >
+                      <option value="COMMODITY">Commodity (refrigerante / revenda)</option>
+                      <option value="AUTORAL">Autoral / da casa</option>
+                    </select>
+                  </div>
+                )}
+
+                {createForm.tipoProduto !== 'BEBIDA' && (
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#444', marginBottom: 8, cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={createForm.produtoAncora}
+                      onChange={(e) => setCreateForm({ ...createForm, produtoAncora: e.target.checked })}
+                    />
+                    Produto âncora / assinatura da marca
+                  </label>
+                )}
+
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#444', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={createForm.incluirAnaliseEstrategica}
+                    onChange={(e) => setCreateForm({ ...createForm, incluirAnaliseEstrategica: e.target.checked })}
+                  />
+                  Incluir na análise estratégica
+                </label>
+
+                <div style={{ fontSize: 11, color: '#aaa', marginTop: 8, lineHeight: 1.5 }}>
+                  Essas marcações serão usadas em análises futuras de vendas, margem e cardápio.
+                </div>
+              </div>
+
               {createError && (
                 <div className="alert alert-red" style={{ marginTop: 12, marginBottom: 0 }}>
                   <div className="alert-msg clr-red">{createError}</div>
