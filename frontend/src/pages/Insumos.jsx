@@ -781,8 +781,6 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
   const [editError, setEditError] = useState(null)
   const [editSubmitting, setEditSubmitting] = useState(false)
 
-  const [custoSaving, setCustoSaving] = useState(false)
-
   function applyResponse(data) {
     setInsumo(data.insumo)
     setReceita(data.receita)
@@ -908,7 +906,18 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
       })
       .then((res) => {
         applyResponse(res.data)
-        setToast({ message: 'Dados da receita salvos.', type: 'success' })
+        // O custo do insumo é sincronizado automaticamente no backend ao salvar
+        if (res.data.custoAtualizado) {
+          setToast({ message: 'Receita salva e custo do insumo atualizado.', type: 'success' })
+        } else {
+          setToast({
+            message: res.data.custoMensagem
+              ? `Dados da receita salvos. ${res.data.custoMensagem}`
+              : 'Dados da receita salvos.',
+            type: 'info'
+          })
+        }
+        return onChanged()
       })
       .catch((e) =>
         setDadosError(e?.response?.data?.error ?? e?.message ?? 'Erro ao salvar receita.')
@@ -960,6 +969,7 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
         setIngQty('')
         setShowAddIngForm(false)
         setToast({ message: 'Ingrediente adicionado à receita.', type: 'success' })
+        return onChanged()
       })
       .catch((err) =>
         setIngError(err?.response?.data?.error ?? err?.message ?? 'Erro ao adicionar ingrediente.')
@@ -990,6 +1000,7 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
       .then((res) => {
         applyResponse(res.data)
         cancelEditItem()
+        return onChanged()
       })
       .catch((err) =>
         setEditError(err?.response?.data?.error ?? err?.message ?? 'Erro ao salvar.')
@@ -1010,6 +1021,7 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
       .then((res) => {
         applyResponse(res.data)
         setToast({ message: 'Ingrediente removido da receita.', type: 'success' })
+        return onChanged()
       })
       .catch((err) =>
         setToast({
@@ -1021,39 +1033,6 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
         setRemovendoIng(false)
         setIngParaRemover(null)
       })
-  }
-
-  function handleAtualizarCusto() {
-    const rendimentoValido = receita && Number(receita.rendimento) > 0
-    const custoCalculado =
-      rendimentoValido &&
-      receita.custoPorRendimento !== null &&
-      receita.custoPorRendimento !== undefined
-    if (!receita || receita.itens.length === 0 || !custoCalculado) {
-      setToast({
-        message:
-          rendimentoValido && receita?.rendimentoIncompativel
-            ? 'A unidade do rendimento não é compatível com a unidade cadastrada para este insumo. Ajuste a unidade do rendimento ou edite a unidade do insumo produzido.'
-            : 'Informe o rendimento da receita para calcular o custo do insumo.',
-        type: 'info'
-      })
-      return
-    }
-    setCustoSaving(true)
-    api
-      .post(`/insumos/${insumoId}/receita/atualizar-custo`)
-      .then((res) => {
-        applyResponse(res.data)
-        setToast({ message: 'Custo do insumo atualizado com base na receita.', type: 'success' })
-        return onChanged()
-      })
-      .catch((err) =>
-        setToast({
-          message: err?.response?.data?.error ?? err?.message ?? 'Erro ao atualizar custo.',
-          type: 'error'
-        })
-      )
-      .finally(() => setCustoSaving(false))
   }
 
   // Ingredientes disponíveis: ativos, sem o próprio insumo e sem produção própria
@@ -1649,30 +1628,12 @@ function ReceitaModal({ insumoId, insumosLista, onClose, onChanged }) {
               </div>
             )}
 
-            {/* Seção 4 — Atualizar custo do insumo */}
-            <div className="section-title">Atualizar Custo do Insumo</div>
-            <div
-              className="card"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: 12,
-                flexWrap: 'wrap'
-              }}
-            >
-              <span style={{ fontSize: 12.5, color: '#888', flex: 1, minWidth: 240 }}>
-                Substitui o custo unitário deste insumo pelo custo calculado da receita
-                (ingredientes + rendimento).
-              </span>
-              <button
-                type="button"
-                className="btn btn-primary"
-                onClick={handleAtualizarCusto}
-                disabled={custoSaving || itens.length === 0 || custoUnitarioCalculado === null}
-              >
-                {custoSaving ? 'Atualizando…' : 'Atualizar custo do insumo'}
-              </button>
+            {/* Custo do insumo é sincronizado automaticamente ao salvar a receita */}
+            <div className="alert alert-gray" style={{ marginTop: 16 }}>
+              <div className="alert-msg" style={{ color: '#888' }}>
+                O custo do insumo é atualizado automaticamente ao salvar a receita, usando o custo
+                calculado (ingredientes + rendimento).
+              </div>
             </div>
           </>
         )}

@@ -352,6 +352,34 @@ function insumoResumo(insumo) {
   };
 }
 
+// Fonte da verdade do custo de produção própria: recalcula a receita e, quando o
+// custo é calculável (tem ingredientes E rendimento válido), sincroniza o
+// custoUnitario do insumo produzido com o custo unitário da receita. NUNCA zera
+// o custo por falta de dados — apenas devolve uma orientação. Mesma regra do
+// antigo botão "Atualizar custo do insumo", agora aplicada automaticamente.
+async function sincronizarCustoComReceita(insumoId) {
+  const receita = await getReceitaCompleta(insumoId);
+  let custoAtualizado = false;
+  let custoMensagem = null;
+  if (receita && receita.itens.length > 0 && receita.custoPorRendimento !== null) {
+    await prisma.insumo.update({
+      where: { id: insumoId },
+      data: { custoUnitario: receita.custoPorRendimento }
+    });
+    custoAtualizado = true;
+  } else if (receita && receita.itens.length === 0) {
+    custoMensagem = 'Adicione ingredientes à receita para calcular e atualizar o custo do insumo.';
+  } else if (receita && receita.rendimentoIncompativel) {
+    custoMensagem =
+      'A unidade do rendimento não é compatível com a unidade do insumo. Ajuste para atualizar o custo.';
+  } else if (receita) {
+    custoMensagem = 'Informe o rendimento da receita para atualizar o custo do insumo.';
+  }
+  const insumo = await prisma.insumo.findUnique({ where: { id: insumoId } });
+  const receitaFinal = custoAtualizado ? await getReceitaCompleta(insumoId) : receita;
+  return { insumo: insumoResumo(insumo), receita: receitaFinal, custoAtualizado, custoMensagem };
+}
+
 app.get('/api/insumos/:id/receita', async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -485,8 +513,8 @@ app.post('/api/insumos/:id/receita', async (req, res) => {
       update: data
     });
 
-    const receita = await getReceitaCompleta(id);
-    res.json({ insumo: insumoResumo(insumo), receita });
+    // Atualiza automaticamente o custo do insumo produzido a partir da receita
+    res.json(await sincronizarCustoComReceita(id));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erro interno ao salvar receita' });
@@ -551,9 +579,7 @@ app.post('/api/insumos/:id/receita/itens', async (req, res) => {
       }
     });
 
-    const insumo = await prisma.insumo.findUnique({ where: { id } });
-    const receitaCompleta = await getReceitaCompleta(id);
-    res.status(201).json({ insumo: insumoResumo(insumo), receita: receitaCompleta });
+    res.status(201).json(await sincronizarCustoComReceita(id));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erro interno ao adicionar ingrediente' });
@@ -587,9 +613,7 @@ app.put('/api/receitas-producao/itens/:itemId', async (req, res) => {
       data: { quantidade: Number(quantidade) }
     });
 
-    const insumo = await prisma.insumo.findUnique({ where: { id: item.receita.insumoId } });
-    const receitaCompleta = await getReceitaCompleta(item.receita.insumoId);
-    res.json({ insumo: insumoResumo(insumo), receita: receitaCompleta });
+    res.json(await sincronizarCustoComReceita(item.receita.insumoId));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erro interno ao atualizar ingrediente' });
@@ -612,9 +636,7 @@ app.delete('/api/receitas-producao/itens/:itemId', async (req, res) => {
 
     await prisma.receitaProducaoItem.delete({ where: { id: itemId } });
 
-    const insumo = await prisma.insumo.findUnique({ where: { id: item.receita.insumoId } });
-    const receitaCompleta = await getReceitaCompleta(item.receita.insumoId);
-    res.json({ insumo: insumoResumo(insumo), receita: receitaCompleta });
+    res.json(await sincronizarCustoComReceita(item.receita.insumoId));
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Erro interno ao remover ingrediente' });
