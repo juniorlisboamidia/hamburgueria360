@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import api from '../services/api'
 import Card from '../components/Card'
+import Toast from '../components/Toast'
+import ConfirmDialog from '../components/ConfirmDialog'
 
 const brlFormatter = new Intl.NumberFormat('pt-BR', {
   style: 'currency',
@@ -83,6 +85,10 @@ export default function CustosVariaveis() {
   const [editError, setEditError] = useState(null)
   const [editSubmitting, setEditSubmitting] = useState(false)
 
+  const [toast, setToast] = useState(null)
+  const [custoParaExcluir, setCustoParaExcluir] = useState(null)
+  const [excluindo, setExcluindo] = useState(false)
+
   function load() {
     setLoading(true)
     setError(null)
@@ -153,16 +159,26 @@ export default function CustosVariaveis() {
   }
 
   function handleDelete(c) {
-    const ok = window.confirm(
-      `Desativar o custo variável "${c.nome}"? Ele não entrará mais nos cálculos do dashboard, mas o histórico será preservado.`
-    )
-    if (!ok) return
+    setCustoParaExcluir(c)
+  }
+
+  function confirmExcluir() {
+    const c = custoParaExcluir
+    if (!c) return
+    setExcluindo(true)
     api
       .delete(`/custos-variaveis/${c.id}`)
-      .then(load)
+      .then(() => {
+        setToast({ message: `Custo variável "${c.nome}" excluído com sucesso.`, type: 'success' })
+        return load()
+      })
       .catch((e) =>
-        window.alert(e?.response?.data?.error ?? e?.message ?? 'Erro ao desativar.')
+        setToast({ message: e?.response?.data?.error ?? e?.message ?? 'Erro ao excluir custo variável.', type: 'error' })
       )
+      .finally(() => {
+        setExcluindo(false)
+        setCustoParaExcluir(null)
+      })
   }
 
   const filtered = useMemo(() => {
@@ -403,6 +419,21 @@ export default function CustosVariaveis() {
           <div className="alert-msg clr-red">{editError}</div>
         </div>
       )}
+
+      <Toast message={toast?.message} type={toast?.type} onClose={() => setToast(null)} />
+
+      <ConfirmDialog
+        open={custoParaExcluir !== null}
+        title="Excluir custo variável?"
+        message={custoParaExcluir ? `Você está prestes a excluir “${custoParaExcluir.nome}”.` : ''}
+        description="Este custo não entrará mais nos cálculos do dashboard, mas o histórico será preservado."
+        confirmLabel="Excluir custo variável"
+        cancelLabel="Cancelar"
+        variant="danger"
+        loading={excluindo}
+        onConfirm={confirmExcluir}
+        onCancel={() => setCustoParaExcluir(null)}
+      />
     </div>
   )
 }

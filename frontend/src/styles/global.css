@@ -375,9 +375,11 @@ a { text-decoration: none; color: inherit; }
   line-height: 1.45;
   animation: toast-in 0.25s ease-out;
 }
-.toast-success { background: #f0fdf4; border-color: #bbf7d0; color: #15803d; }
+/* Sucesso segue a identidade laranja da sidebar (sem verde): fundo suave,
+   borda clara e texto laranja escuro — limpo e legível */
+.toast-success { background: #fff7ed; border-color: #fed7aa; color: #c2410b; }
 .toast-error   { background: #fef2f2; border-color: #fecaca; color: #b91c1c; }
-.toast-info    { background: #eff6ff; border-color: #bfdbfe; color: #1d4ed8; }
+.toast-info    { background: #fffbeb; border-color: #fde68a; color: #b45309; }
 .toast-close {
   background: none;
   border: none;

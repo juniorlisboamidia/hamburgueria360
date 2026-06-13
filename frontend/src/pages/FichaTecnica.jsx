@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import api from '../services/api'
 import Card from '../components/Card'
+import Toast from '../components/Toast'
+import ConfirmDialog from '../components/ConfirmDialog'
 
 const brlFormatter = new Intl.NumberFormat('pt-BR', {
   style: 'currency',
@@ -164,6 +166,10 @@ function FichaProdutoEditor({ produtoId }) {
   const [editError, setEditError] = useState(null)
   const [editSubmitting, setEditSubmitting] = useState(false)
 
+  const [toast, setToast] = useState(null)
+  const [itemParaRemover, setItemParaRemover] = useState(null)
+  const [removendo, setRemovendo] = useState(false)
+
   function loadAll() {
     setLoading(true)
     setError(null)
@@ -265,14 +271,26 @@ function FichaProdutoEditor({ produtoId }) {
   }
 
   function handleDelete(item) {
-    const ok = window.confirm(`Remover "${item.insumo.nome}" da ficha técnica?`)
-    if (!ok) return
+    setItemParaRemover(item)
+  }
+
+  function confirmRemover() {
+    const item = itemParaRemover
+    if (!item) return
+    setRemovendo(true)
     api
       .delete(`/ficha-tecnica/itens/${item.id}`)
-      .then(reload)
+      .then(() => {
+        setToast({ message: `"${item.insumo.nome}" removido da ficha técnica.`, type: 'success' })
+        return reload()
+      })
       .catch((err) =>
-        window.alert(err?.response?.data?.error ?? err?.message ?? 'Erro ao remover.')
+        setToast({ message: err?.response?.data?.error ?? err?.message ?? 'Erro ao remover item.', type: 'error' })
       )
+      .finally(() => {
+        setRemovendo(false)
+        setItemParaRemover(null)
+      })
   }
 
   if (loading) return <div className="loading-state">Carregando ficha técnica…</div>
@@ -549,6 +567,21 @@ function FichaProdutoEditor({ produtoId }) {
           </div>
         </>
       )}
+
+      <Toast message={toast?.message} type={toast?.type} onClose={() => setToast(null)} />
+
+      <ConfirmDialog
+        open={itemParaRemover !== null}
+        title="Remover item da ficha técnica?"
+        message={itemParaRemover ? `Você está prestes a remover “${itemParaRemover.insumo.nome}”.` : ''}
+        description="O item sai da ficha técnica e dos cálculos de custo deste produto."
+        confirmLabel="Remover item"
+        cancelLabel="Cancelar"
+        variant="danger"
+        loading={removendo}
+        onConfirm={confirmRemover}
+        onCancel={() => setItemParaRemover(null)}
+      />
     </div>
   )
 }

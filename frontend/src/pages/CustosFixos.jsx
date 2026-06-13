@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import api from '../services/api'
 import Card from '../components/Card'
+import Toast from '../components/Toast'
+import ConfirmDialog from '../components/ConfirmDialog'
 
 const brlFormatter = new Intl.NumberFormat('pt-BR', {
   style: 'currency',
@@ -50,6 +52,10 @@ export default function CustosFixos() {
   const [editForm, setEditForm] = useState(FORM_BLANK)
   const [editError, setEditError] = useState(null)
   const [editSubmitting, setEditSubmitting] = useState(false)
+
+  const [toast, setToast] = useState(null)
+  const [custoParaExcluir, setCustoParaExcluir] = useState(null)
+  const [excluindo, setExcluindo] = useState(false)
 
   function load() {
     setLoading(true)
@@ -121,16 +127,26 @@ export default function CustosFixos() {
   }
 
   function handleDelete(c) {
-    const ok = window.confirm(
-      `Desativar o custo fixo "${c.nome}"? Ele não entrará mais nos cálculos mensais, mas o histórico será preservado.`
-    )
-    if (!ok) return
+    setCustoParaExcluir(c)
+  }
+
+  function confirmExcluir() {
+    const c = custoParaExcluir
+    if (!c) return
+    setExcluindo(true)
     api
       .delete(`/custos-fixos/${c.id}`)
-      .then(load)
+      .then(() => {
+        setToast({ message: `Custo fixo "${c.nome}" excluído com sucesso.`, type: 'success' })
+        return load()
+      })
       .catch((e) =>
-        window.alert(e?.response?.data?.error ?? e?.message ?? 'Erro ao desativar.')
+        setToast({ message: e?.response?.data?.error ?? e?.message ?? 'Erro ao excluir custo fixo.', type: 'error' })
       )
+      .finally(() => {
+        setExcluindo(false)
+        setCustoParaExcluir(null)
+      })
   }
 
   const filtered = useMemo(() => {
@@ -344,6 +360,21 @@ export default function CustosFixos() {
           <div className="alert-msg clr-red">{editError}</div>
         </div>
       )}
+
+      <Toast message={toast?.message} type={toast?.type} onClose={() => setToast(null)} />
+
+      <ConfirmDialog
+        open={custoParaExcluir !== null}
+        title="Excluir custo fixo?"
+        message={custoParaExcluir ? `Você está prestes a excluir “${custoParaExcluir.nome}”.` : ''}
+        description="Este custo não entrará mais nos cálculos mensais, mas o histórico será preservado."
+        confirmLabel="Excluir custo fixo"
+        cancelLabel="Cancelar"
+        variant="danger"
+        loading={excluindo}
+        onConfirm={confirmExcluir}
+        onCancel={() => setCustoParaExcluir(null)}
+      />
     </div>
   )
 }
