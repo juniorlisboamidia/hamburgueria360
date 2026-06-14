@@ -14,6 +14,18 @@ function int(v) {
   if (!Number.isFinite(n)) return '0'
   return intFmt.format(n)
 }
+const numFmt = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 })
+function num(v) {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return '0'
+  return numFmt.format(n)
+}
+const brlFmt = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' })
+function brl(v) {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return '—'
+  return brlFmt.format(n)
+}
 
 // Normaliza nome para comparação: minúsculo, sem acentos (ç→c), sem pontos
 // (B.B.Q → bbq), sem caracteres especiais e espaços colapsados.
@@ -245,6 +257,224 @@ function SubSecaoDiag({ title, children }) {
   )
 }
 
+// ===== Consumo estimado de insumos (V3) =====
+const TIPO_LABEL = { PRODUTO: 'Produto', BEBIDA: 'Bebida', COMBO: 'Combo' }
+const STATUS_INSUMO_META = {
+  'OK': 'badge-green',
+  'Sem custo': 'badge-gray',
+  'Unidade ausente': 'badge-orange',
+  'Dados incompletos': 'badge-yellow'
+}
+
+// Cruza as linhas associadas da planilha com a ficha técnica / itens de combo /
+// custos adicionais do combo (vindos de /produtos-detalhados) e estima o consumo
+// de cada insumo no período. Reaproveita custoAplicado (custo do sistema por 1
+// produto) para o valor; nunca gera NaN/Infinity. Espelha a regra de embalagem
+// do custo do combo (embalagem individual só entra quando incluirEmbalagem=true).
+function calcularConsumo(linhasResolvidas, detalhePorId) {
+  const insumos = new Map() // insumoId -> agregado de consumo
+  const compraDireta = new Map() // produtoId -> { produto, totalVendido, custoDireto, valor, semCusto }
+  const semFicha = [] // produtos sem ficha técnica e não compra direta
+  const porProduto = [] // por produto que puxa consumo (seção 2)
+  const alertas = []
+  let temComboVendido = false
+  let temOfertaEmProduto = false
+
+  const safe = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0)
+
+  function acumularInsumo(ref, fTotal, fPri, fComp, fOf, valor, prodAcc) {
+    const key = ref.insumoId
+    let agg = insumos.get(key)
+    if (!agg) {
+      agg = {
+        insumoId: key,
+        nome: ref.nome ?? '—',
+        unidade: ref.unidade ?? null,
+        custoUnitario: ref.custoUnitario ?? null,
+        consumoTotal: 0,
+        consumoPrincipal: 0,
+        consumoComplemento: 0,
+        consumoOferta: 0,
+        valor: 0,
+        temCusto: false,
+        origem: new Map()
+      }
+      insumos.set(key, agg)
+    }
+    agg.consumoTotal += safe(fTotal)
+    agg.consumoPrincipal += safe(fPri)
+    agg.consumoComplemento += safe(fComp)
+    agg.consumoOferta += safe(fOf)
+    agg.valor += safe(valor)
+    if (safe(valor) > 0) agg.temCusto = true
+    const oId = prodAcc.produto.id
+    let o = agg.origem.get(oId)
+    if (!o) { o = { nome: prodAcc.produto.nome, totalVendido: prodAcc.total, consumo: 0, valor: 0 }; agg.origem.set(oId, o) }
+    o.consumo += safe(fTotal)
+    o.valor += safe(valor)
+    prodAcc.insumosUsados.add(key)
+    prodAcc.valor += safe(valor)
+  }
+
+  // Explode a ficha de um produto (PRODUTO) com um multiplicador de unidades
+  // vendidas. excluirEmbalagem remove itens tipoUso=EMBALAGEM (uso em combo).
+  function explodirFicha(det, base, prodAcc, excluirEmbalagem) {
+    for (const item of det.ficha) {
+      if (excluirEmbalagem && item.tipoUso === 'EMBALAGEM') continue
+      const q = safe(item.quantidade)
+      const fTotal = base.total * q
+      const fPri = base.principal * q
+      const fComp = base.complemento * q
+      const fOf = base.oferta * q
+      const valor = base.total * safe(item.custoAplicado)
+      acumularInsumo(
+        { insumoId: item.insumoId, nome: item.nome, unidade: item.unidadeQuantidade ?? item.unidade, custoUnitario: item.custoUnitario },
+        fTotal, fPri, fComp, fOf, valor, prodAcc
+      )
+    }
+  }
+
+  function addCompraDireta(produto, unidades, prodAccValorRef) {
+    const cd = produto.custoDireto
+    const temCusto = cd !== null && cd !== undefined && Number.isFinite(Number(cd))
+    let reg = compraDireta.get(produto.id)
+    if (!reg) {
+      reg = { produto, totalVendido: 0, custoDireto: temCusto ? Number(cd) : null, valor: 0, semCusto: !temCusto }
+      compraDireta.set(produto.id, reg)
+    }
+    reg.totalVendido += safe(unidades)
+    if (temCusto) reg.valor += safe(unidades) * Number(cd)
+    else reg.semCusto = true
+    if (prodAccValorRef && temCusto) prodAccValorRef.valor += safe(unidades) * Number(cd)
+  }
+
+  for (const l of linhasResolvidas) {
+    if (l.status !== 'ASSOCIADO' || !l.produto) continue
+    if (safe(l.total) <= 0) continue // produto zerado não gera consumo
+    const det = detalhePorId.get(l.produto.id)
+    if (!det) continue
+    const tipo = det.tipoProduto ?? 'PRODUTO'
+    const base = { total: safe(l.total), principal: safe(l.principal), complemento: safe(l.complemento), oferta: safe(l.oferta) }
+    if (base.oferta > 0 && tipo !== 'COMBO') temOfertaEmProduto = true
+
+    const prodAcc = { produto: l.produto, total: base.total, valor: 0, insumosUsados: new Set(), statusFicha: 'Ficha OK', alerta: false }
+
+    if (tipo === 'COMBO') {
+      temComboVendido = true
+      prodAcc.statusFicha = 'Combo explodido'
+      const temAlgo = det.comboItens.length > 0 || det.comboInsumos.length > 0
+      if (!temAlgo) {
+        alertas.push({ tipo: 'Combo sem itens', produto: l.produto.nome })
+        prodAcc.statusFicha = 'Combo com alerta'; prodAcc.alerta = true
+      }
+      // itens internos
+      for (const ci of det.comboItens) {
+        const filho = detalhePorId.get(ci.produtoId)
+        const mult = safe(ci.quantidade)
+        const baseFilho = { total: base.total * mult, principal: base.principal * mult, complemento: base.complemento * mult, oferta: base.oferta * mult }
+        if (!filho) { prodAcc.alerta = true; prodAcc.statusFicha = 'Combo com alerta'; continue }
+        const tipoFilho = filho.tipoProduto ?? 'PRODUTO'
+        if (tipoFilho === 'COMBO') {
+          alertas.push({ tipo: 'Combo dentro de combo', produto: l.produto.nome })
+          prodAcc.alerta = true; prodAcc.statusFicha = 'Combo com alerta'; continue
+        }
+        if (filho.ficha.length > 0) {
+          explodirFicha(filho, baseFilho, prodAcc, !ci.incluirEmbalagemIndividual)
+        } else if (tipoFilho === 'BEBIDA') {
+          addCompraDireta(filho, baseFilho.total, prodAcc)
+        } else {
+          alertas.push({ tipo: 'Produto sem ficha técnica', produto: filho.nome + ' (em ' + l.produto.nome + ')' })
+          prodAcc.alerta = true; prodAcc.statusFicha = 'Combo com alerta'
+        }
+      }
+      // custos adicionais do combo
+      for (const cins of det.comboInsumos) {
+        const q = safe(cins.quantidade)
+        acumularInsumo(
+          { insumoId: cins.insumoId, nome: cins.nome, unidade: cins.unidade, custoUnitario: cins.custoUnitario },
+          base.total * q, base.principal * q, base.complemento * q, base.oferta * q,
+          base.total * safe(cins.custoTotal), prodAcc
+        )
+      }
+    } else if (det.ficha.length > 0) {
+      // PRODUTO (ou bebida) com ficha: venda direta usa a ficha como cadastrada
+      explodirFicha(det, base, prodAcc, false)
+      prodAcc.statusFicha = 'Ficha OK'
+    } else if (tipo === 'BEBIDA') {
+      addCompraDireta(det, base.total, null)
+      prodAcc.statusFicha = 'Compra direta'
+      // valor do produto = valor da compra direta
+      const cd = det.custoDireto
+      if (cd !== null && cd !== undefined && Number.isFinite(Number(cd))) prodAcc.valor += base.total * Number(cd)
+      else alertas.push({ tipo: 'Item sem custo direto', produto: l.produto.nome })
+    } else {
+      // PRODUTO sem ficha técnica
+      semFicha.push({ produto: l.produto, total: base.total, tipo })
+      alertas.push({ tipo: 'Produto sem ficha técnica', produto: l.produto.nome })
+      prodAcc.statusFicha = 'Sem ficha'; prodAcc.alerta = true
+    }
+
+    porProduto.push(prodAcc)
+  }
+
+  // Finaliza insumos: status + participação por origem
+  const insumosArr = [...insumos.values()].map((agg) => {
+    const semUnidade = !agg.unidade
+    const semCusto = !agg.temCusto || agg.custoUnitario === null || agg.custoUnitario === undefined || Number(agg.custoUnitario) === 0
+    let status = 'OK'
+    if (semUnidade) status = 'Unidade ausente'
+    else if (semCusto) status = 'Sem custo'
+    const origem = [...agg.origem.values()]
+      .map((o) => ({ ...o, participacao: agg.consumoTotal > 0 ? (o.consumo / agg.consumoTotal) * 100 : 0 }))
+      .sort((a, b) => b.consumo - a.consumo)
+    return { ...agg, status, origem }
+  })
+  // Ordena: por valor desc quando houver custo; senão por consumo desc
+  insumosArr.sort((a, b) => (b.valor - a.valor) || (b.consumoTotal - a.consumoTotal))
+
+  if (semCustoAlerta(insumosArr)) {
+    for (const i of insumosArr.filter((x) => x.status === 'Sem custo')) {
+      alertas.push({ tipo: 'Insumo sem custo unitário', produto: i.nome })
+    }
+    for (const i of insumosArr.filter((x) => x.status === 'Unidade ausente')) {
+      alertas.push({ tipo: 'Unidade ausente', produto: i.nome })
+    }
+  }
+  if (temComboVendido && temOfertaEmProduto) {
+    alertas.push({ tipo: 'Possível dupla contagem por combo/oferta', produto: null })
+  }
+
+  const compraDiretaArr = [...compraDireta.values()].sort((a, b) => (b.valor - a.valor) || (b.totalVendido - a.totalVendido))
+  const valorTotal = insumosArr.reduce((s, i) => s + i.valor, 0) + compraDiretaArr.reduce((s, c) => s + c.valor, 0)
+
+  // produtos que puxam consumo (agrega por produto; soma quantidades se repetido)
+  const porProdutoMap = new Map()
+  for (const pa of porProduto) {
+    let r = porProdutoMap.get(pa.produto.id)
+    if (!r) { r = { produto: pa.produto, total: 0, valor: 0, insumos: new Set(), statusFicha: pa.statusFicha }; porProdutoMap.set(pa.produto.id, r) }
+    r.total += pa.total
+    r.valor += pa.valor
+    pa.insumosUsados.forEach((k) => r.insumos.add(k))
+    if (pa.statusFicha === 'Combo com alerta' || pa.statusFicha === 'Sem ficha') r.statusFicha = pa.statusFicha
+  }
+  const produtosPuxam = [...porProdutoMap.values()]
+    .map((r) => ({ ...r, insumosUsados: r.insumos.size }))
+    .sort((a, b) => (b.valor - a.valor) || (b.total - a.total))
+
+  return {
+    insumos: insumosArr,
+    compraDireta: compraDiretaArr,
+    semFicha,
+    produtosPuxam,
+    alertas,
+    valorTotal,
+    produtosAnalisados: porProdutoMap.size
+  }
+}
+function semCustoAlerta(insumosArr) {
+  return insumosArr.some((x) => x.status === 'Sem custo' || x.status === 'Unidade ausente')
+}
+
 export default function AnaliseVendas() {
   const [produtos, setProdutos] = useState([])
   const [produtosErro, setProdutosErro] = useState(null)
@@ -253,6 +483,7 @@ export default function AnaliseVendas() {
   const [colarTexto, setColarTexto] = useState('')
   const [colarAberto, setColarAberto] = useState(false)
   const [toast, setToast] = useState(null)
+  const [detalhes, setDetalhes] = useState([])
   const fileRef = useRef(null)
 
   useEffect(() => {
@@ -267,7 +498,18 @@ export default function AnaliseVendas() {
               : err?.message ?? 'Erro ao carregar produtos.')
         )
       )
+    // Detalhes (ficha técnica + combo) para o consumo estimado da V3 — read-only
+    api
+      .get('/produtos-detalhados')
+      .then((r) => setDetalhes(r.data))
+      .catch(() => setDetalhes([]))
   }, [])
+
+  const detalhePorId = useMemo(() => {
+    const m = new Map()
+    for (const d of detalhes) m.set(d.id, d)
+    return m
+  }, [detalhes])
 
   function aplicarMatriz(matrix) {
     const res = processarMatriz(matrix)
@@ -471,6 +713,12 @@ export default function AnaliseVendas() {
       zerados
     }
   }, [rankingEstrategico])
+
+  // ===== Consumo estimado de insumos (V3) =====
+  const consumo = useMemo(
+    () => calcularConsumo(linhasResolvidas, detalhePorId),
+    [linhasResolvidas, detalhePorId]
+  )
 
   const temImportacao = linhas.length > 0
 
@@ -779,6 +1027,209 @@ export default function AnaliseVendas() {
                   leitura={() => LEITURA_ZERADO}
                   vazio="Nenhum produto sem venda no período."
                 />
+              </SubSecaoDiag>
+            </>
+          )}
+
+          {/* ===== Consumo estimado de insumos (V3) ===== */}
+          <div className="section-title">Consumo Estimado de Insumos</div>
+          <div style={{ fontSize: 11.5, color: '#999', marginBottom: 10 }}>
+            Cruza a planilha com a ficha técnica, itens de combo e custos adicionais do combo.
+            Estimativa por volume vendido; não é previsão de compra.
+          </div>
+          {m.associados === 0 ? (
+            <div className="empty-state" style={{ padding: '28px 16px' }}>
+              Associe os itens vendidos aos produtos para calcular o consumo estimado.
+            </div>
+          ) : consumo.insumos.length === 0 && consumo.compraDireta.length === 0 ? (
+            <div className="empty-state" style={{ padding: '28px 16px' }}>
+              Nenhum consumo estimado foi calculado. Verifique fichas técnicas e itens de compra direta.
+            </div>
+          ) : (
+            <>
+              <div className="kpi-grid">
+                <Card title="Insumos Consumidos" value={int(consumo.insumos.length)} hint="Com consumo estimado > 0" variant="info" />
+                <Card title="Valor Estimado Consumido" value={brl(consumo.valorTotal)} hint="Onde há custo cadastrado" variant="brand" />
+                <Card title="Produtos Analisados" value={int(consumo.produtosAnalisados)} hint="Associados que entraram no cálculo" variant="success" />
+                <Card title="Produtos Sem Ficha" value={int(consumo.semFicha.length)} hint="Sem ficha e não compra direta" variant={consumo.semFicha.length > 0 ? 'warn' : 'success'} />
+              </div>
+              <div className="kpi-grid kpi-grid-3">
+                <Card title="Itens de Compra Direta" value={int(consumo.compraDireta.length)} hint="Bebidas/produtos sem ficha" />
+                <Card title="Alertas de Dados" value={int(consumo.alertas.length)} hint="Conferência de cadastro" variant={consumo.alertas.length > 0 ? 'warn' : 'success'} />
+                <Card title="Produtos que Puxam Consumo" value={int(consumo.produtosPuxam.length)} hint="Geraram consumo de insumo" />
+              </div>
+
+              {/* 1. Ranking de consumo por insumo */}
+              <SubSecaoDiag title="1. Ranking de consumo por insumo">
+                {consumo.insumos.length === 0 ? (
+                  <div className="empty-state" style={{ padding: '20px 16px' }}>Nenhum item encontrado nesta categoria.</div>
+                ) : (
+                  <div className="table-card">
+                    <table className="hb-table hb-table-compact">
+                      <thead>
+                        <tr>
+                          <th>Insumo</th>
+                          <th style={{ textAlign: 'right' }}>Consumo estimado</th>
+                          <th>Unidade</th>
+                          <th style={{ textAlign: 'right' }}>Valor estimado</th>
+                          <th style={{ textAlign: 'right' }}>Principal</th>
+                          <th style={{ textAlign: 'right' }}>Complemento</th>
+                          <th style={{ textAlign: 'right' }}>Oferta/Combo</th>
+                          <th>Principais produtos</th>
+                          <th>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {consumo.insumos.map((i) => (
+                          <tr key={i.insumoId}>
+                            <td style={{ fontWeight: 500, color: '#111' }}>{i.nome}</td>
+                            <td style={{ textAlign: 'right', fontWeight: 600 }}>{num(i.consumoTotal)}</td>
+                            <td>{i.unidade ?? <span className="clr-muted">—</span>}</td>
+                            <td style={{ textAlign: 'right' }}>
+                              {i.status === 'Sem custo' ? <span className="clr-muted">Sem custo</span> : brl(i.valor)}
+                            </td>
+                            <td style={{ textAlign: 'right' }}>{num(i.consumoPrincipal)}</td>
+                            <td style={{ textAlign: 'right' }}>{num(i.consumoComplemento)}</td>
+                            <td style={{ textAlign: 'right' }}>{num(i.consumoOferta)}</td>
+                            <td style={{ fontSize: 11.5, color: '#666', maxWidth: 240 }}>
+                              {i.origem.slice(0, 3).map((o) => `${o.nome} (${Math.round(o.participacao)}%)`).join(', ')}
+                            </td>
+                            <td><span className={'badge ' + STATUS_INSUMO_META[i.status]}>{i.status}</span></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </SubSecaoDiag>
+
+              {/* 2. Produtos que mais puxam consumo */}
+              <SubSecaoDiag title="2. Produtos que mais puxam consumo">
+                {consumo.produtosPuxam.length === 0 ? (
+                  <div className="empty-state" style={{ padding: '20px 16px' }}>Nenhum item encontrado nesta categoria.</div>
+                ) : (
+                  <div className="table-card">
+                    <table className="hb-table hb-table-compact">
+                      <thead>
+                        <tr>
+                          <th>Produto</th>
+                          <th style={{ textAlign: 'right' }}>Total vendido</th>
+                          <th style={{ textAlign: 'right' }}>Insumos usados</th>
+                          <th style={{ textAlign: 'right' }}>Valor estimado</th>
+                          <th>Status da ficha</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {consumo.produtosPuxam.map((r) => (
+                          <tr key={r.produto.id}>
+                            <td style={{ fontWeight: 500, color: '#111' }}>{r.produto.nome}</td>
+                            <td style={{ textAlign: 'right', fontWeight: 600 }}>{int(r.total)}</td>
+                            <td style={{ textAlign: 'right' }}>{int(r.insumosUsados)}</td>
+                            <td style={{ textAlign: 'right' }}>{r.valor > 0 ? brl(r.valor) : <span className="clr-muted">—</span>}</td>
+                            <td><span className={'badge ' + (r.statusFicha === 'Ficha OK' || r.statusFicha === 'Combo explodido' ? 'badge-green' : r.statusFicha === 'Compra direta' ? 'badge-blue' : 'badge-orange')}>{r.statusFicha}</span></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </SubSecaoDiag>
+
+              {/* 3. Produtos sem ficha técnica */}
+              <SubSecaoDiag title="3. Produtos sem ficha técnica">
+                {consumo.semFicha.length === 0 ? (
+                  <div className="empty-state" style={{ padding: '20px 16px' }}>Nenhum item encontrado nesta categoria.</div>
+                ) : (
+                  <div className="table-card">
+                    <table className="hb-table hb-table-compact">
+                      <thead>
+                        <tr>
+                          <th>Produto</th>
+                          <th style={{ textAlign: 'right' }}>Total vendido</th>
+                          <th>Tipo</th>
+                          <th>Leitura</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {consumo.semFicha.map((s) => (
+                          <tr key={s.produto.id}>
+                            <td style={{ fontWeight: 500, color: '#111' }}>{s.produto.nome}</td>
+                            <td style={{ textAlign: 'right', fontWeight: 600 }}>{int(s.total)}</td>
+                            <td>{TIPO_LABEL[s.tipo] ?? s.tipo}</td>
+                            <td style={{ fontSize: 11.5, color: '#666', maxWidth: 360 }}>
+                              Produto vendido no período, mas sem ficha técnica. O consumo estimado está incompleto.
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </SubSecaoDiag>
+
+              {/* 4. Itens de compra direta */}
+              <SubSecaoDiag title="4. Itens de compra direta">
+                {consumo.compraDireta.length === 0 ? (
+                  <div className="empty-state" style={{ padding: '20px 16px' }}>Nenhum item encontrado nesta categoria.</div>
+                ) : (
+                  <div className="table-card">
+                    <table className="hb-table hb-table-compact">
+                      <thead>
+                        <tr>
+                          <th>Item</th>
+                          <th style={{ textAlign: 'right' }}>Total vendido</th>
+                          <th>Unidade</th>
+                          <th style={{ textAlign: 'right' }}>Custo direto</th>
+                          <th style={{ textAlign: 'right' }}>Valor estimado</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {consumo.compraDireta.map((c) => (
+                          <tr key={c.produto.id}>
+                            <td style={{ fontWeight: 500, color: '#111' }}>
+                              {c.produto.nome}
+                              {c.semCusto && <span className="clr-orange" style={{ fontSize: 11 }}> · sem custo direto cadastrado</span>}
+                            </td>
+                            <td style={{ textAlign: 'right', fontWeight: 600 }}>{int(c.totalVendido)}</td>
+                            <td>un</td>
+                            <td style={{ textAlign: 'right' }}>{c.custoDireto === null ? <span className="clr-muted">—</span> : brl(c.custoDireto)}</td>
+                            <td style={{ textAlign: 'right' }}>{c.custoDireto === null ? <span className="clr-muted">—</span> : brl(c.valor)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </SubSecaoDiag>
+
+              {/* 5. Alertas da análise */}
+              <SubSecaoDiag title="5. Alertas da análise">
+                {consumo.alertas.length === 0 ? (
+                  <div className="empty-state" style={{ padding: '20px 16px' }}>Nenhum alerta. Dados de cadastro consistentes para esta análise.</div>
+                ) : (
+                  <div className="alert alert-yellow" style={{ marginBottom: 0 }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {Object.entries(
+                        consumo.alertas.reduce((acc, a) => {
+                          ;(acc[a.tipo] = acc[a.tipo] ?? []).push(a.produto)
+                          return acc
+                        }, {})
+                      ).map(([tipo, itens]) => {
+                        const nomes = itens.filter(Boolean)
+                        return (
+                          <div key={tipo} className="alert-msg">
+                            • <strong>{tipo}</strong>
+                            {nomes.length > 0 && (
+                              <span className="clr-muted">
+                                {' '}({nomes.length}): {nomes.slice(0, 6).join(', ')}{nomes.length > 6 ? '…' : ''}
+                              </span>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
               </SubSecaoDiag>
             </>
           )}

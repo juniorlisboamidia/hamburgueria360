@@ -704,6 +704,89 @@ app.get('/api/produtos', async (req, res) => {
   }
 });
 
+// Read-only: todos os produtos ativos com ficha técnica (enriquecida), itens de
+// combo e custos adicionais do combo, em uma única chamada. Usado pela Análise
+// de Vendas (V3) para estimar consumo de insumos. Reusa o cálculo existente
+// (computeFichaTotals/comboInsumoOut); não altera nenhuma regra de negócio.
+app.get('/api/produtos-detalhados', async (req, res) => {
+  try {
+    const produtos = await prisma.produto.findMany({
+      where: { ativo: true },
+      orderBy: { nome: 'asc' }
+    });
+    const [fichaItensRaw, comboItensRaw, comboInsumosRaw] = await Promise.all([
+      prisma.fichaTecnicaItem.findMany({ include: FICHA_INSUMO_INCLUDE }),
+      prisma.comboItem.findMany(),
+      prisma.comboInsumo.findMany({ include: COMBO_INSUMO_INCLUDE })
+    ]);
+
+    const fichaPorProduto = new Map();
+    for (const it of fichaItensRaw) {
+      if (!fichaPorProduto.has(it.produtoId)) fichaPorProduto.set(it.produtoId, []);
+      fichaPorProduto.get(it.produtoId).push(it);
+    }
+    const comboItensPorCombo = new Map();
+    for (const it of comboItensRaw) {
+      if (!comboItensPorCombo.has(it.comboId)) comboItensPorCombo.set(it.comboId, []);
+      comboItensPorCombo.get(it.comboId).push(it);
+    }
+    const comboInsumosPorCombo = new Map();
+    for (const it of comboInsumosRaw) {
+      if (!comboInsumosPorCombo.has(it.comboId)) comboInsumosPorCombo.set(it.comboId, []);
+      comboInsumosPorCombo.get(it.comboId).push(it);
+    }
+
+    const round4 = (n) => Number(Number(n).toFixed(4));
+    const out = produtos.map((p) => {
+      const tipo = p.tipoProduto ?? 'PRODUTO';
+      // Ficha técnica enriquecida: custoAplicado é o custo (rateado) por 1 produto
+      const fichaTotais = computeFichaTotals(fichaPorProduto.get(p.id) ?? []);
+      const ficha = fichaTotais.itens.map((it) => ({
+        insumoId: it.insumoId,
+        nome: it.insumo?.nome ?? '—',
+        unidade: it.insumo?.unidade ?? null,
+        unidadeQuantidade: it.unidadeQuantidadeFicha ?? null,
+        quantidade: round4(it.quantidade),
+        custoUnitario:
+          it.insumo?.custoUnitario === null || it.insumo?.custoUnitario === undefined
+            ? null
+            : Number(it.insumo.custoUnitario),
+        custoAplicado: round4(it.custoAplicado),
+        tipoUso: it.tipoUso
+      }));
+      return {
+        id: p.id,
+        nome: p.nome,
+        tipoProduto: tipo,
+        precoVenda: p.precoVenda === null || p.precoVenda === undefined ? null : Number(p.precoVenda),
+        custoDireto: p.custoDireto === null || p.custoDireto === undefined ? null : Number(p.custoDireto),
+        produtoAncora: p.produtoAncora,
+        produtoIsca: p.produtoIsca,
+        incluirAnaliseEstrategica: p.incluirAnaliseEstrategica,
+        tipoBebidaAnalise: p.tipoBebidaAnalise,
+        ficha,
+        comboItens:
+          tipo === 'COMBO'
+            ? (comboItensPorCombo.get(p.id) ?? []).map((c) => ({
+                produtoId: c.produtoId,
+                quantidade: Number(c.quantidade),
+                incluirEmbalagemIndividual: !!c.incluirEmbalagemIndividual
+              }))
+            : [],
+        comboInsumos:
+          tipo === 'COMBO'
+            ? (comboInsumosPorCombo.get(p.id) ?? []).map(comboInsumoOut)
+            : []
+      };
+    });
+
+    res.json(out);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Erro interno ao listar produtos detalhados' });
+  }
+});
+
 const TIPOS_PRODUTO = ['PRODUTO', 'BEBIDA', 'COMBO'];
 const TIPOS_BEBIDA_ANALISE = ['COMMODITY', 'AUTORAL'];
 
