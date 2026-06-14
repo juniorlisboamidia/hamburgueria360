@@ -384,13 +384,13 @@ export default function AnaliseVendas() {
         <>
           {/* ===== Métricas ===== */}
           <div className="section-title">Resumo da Importação</div>
-          <div className="grid-4">
+          <div className="kpi-grid">
             <Card title="Total Vendido" value={int(m.totalVendido)} hint="Soma de TOTAL" variant="brand" />
             <Card title="Itens Únicos" value={int(m.itensUnicos)} hint="Linhas com nome válido" variant="info" />
             <Card title="Quantidade Principal" value={int(m.somaPrincipal)} hint="Soma de QNT PRINCIPAL" />
             <Card title="Quantidade Complemento" value={int(m.somaComplemento)} hint="Soma de QNT COMPLEMENTO" />
           </div>
-          <div className="grid-3">
+          <div className="kpi-grid kpi-grid-3">
             <Card title="Oferta / Combo" value={int(m.somaOferta)} hint="Soma de OFERTA/COMBO" />
             <Card title="Itens Associados" value={int(m.associados)} hint="Linhas ligadas a um produto" variant="success" />
             <Card

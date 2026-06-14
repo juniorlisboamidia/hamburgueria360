@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 const brlFormatter = new Intl.NumberFormat('pt-BR', {
   style: 'currency',
@@ -22,9 +22,35 @@ export default function InsumoAutocomplete({
 }) {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
+  const [openUp, setOpenUp] = useState(false)
   const [activeIndex, setActiveIndex] = useState(-1)
   const rootRef = useRef(null)
   const typingRef = useRef(false)
+
+  // Decide se o menu abre para baixo (padrão) ou para cima, conforme o espaço
+  // disponível na viewport — evita que a lista fique cortada perto do rodapé.
+  const recalcDirection = useCallback(() => {
+    const el = rootRef.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    const menuMax = 248 // max-height (240) + folga
+    const espacoAbaixo = window.innerHeight - rect.bottom
+    const espacoAcima = rect.top
+    setOpenUp(espacoAbaixo < menuMax && espacoAcima > espacoAbaixo)
+  }, [])
+
+  // Recalcula a direção ao abrir e ao rolar/redimensionar enquanto está aberto
+  useEffect(() => {
+    if (!open) return undefined
+    recalcDirection()
+    const onMove = () => recalcDirection()
+    window.addEventListener('scroll', onMove, true)
+    window.addEventListener('resize', onMove)
+    return () => {
+      window.removeEventListener('scroll', onMove, true)
+      window.removeEventListener('resize', onMove)
+    }
+  }, [open, recalcDirection])
 
   const label = getOptionLabel ?? defaultOptionLabel
   const selected = useMemo(
@@ -119,7 +145,7 @@ export default function InsumoAutocomplete({
         onKeyDown={handleKeyDown}
       />
       {open && !disabled && (
-        <div className="autocomplete-menu">
+        <div className={'autocomplete-menu' + (openUp ? ' autocomplete-menu-up' : '')}>
           {filtered.length === 0 ? (
             <div className="autocomplete-empty">Nenhum insumo encontrado.</div>
           ) : (
