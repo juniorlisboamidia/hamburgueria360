@@ -131,6 +131,120 @@ const STATUS_META = {
   PRECISA_REVISAO: { label: 'Precisa revisão', cls: 'badge-yellow' }
 }
 
+// ===== Diagnóstico estratégico (V2): leitura gerencial por volume =====
+
+// Percentual formatado com proteção contra valores inválidos (nunca NaN/Infinity)
+function pctTxt(v) {
+  const n = Number(v)
+  if (!Number.isFinite(n)) return '0%'
+  return `${(Math.round(n * 10) / 10).toLocaleString('pt-BR')}%`
+}
+
+const FAIXA_META = {
+  ALTO: { label: 'Alto volume', cls: 'badge-green' },
+  MEDIO: { label: 'Volume médio', cls: 'badge-blue' },
+  BAIXO: { label: 'Baixo volume', cls: 'badge-orange' },
+  ZERADO: { label: 'Sem venda', cls: 'badge-gray' }
+}
+function FaixaBadge({ faixa }) {
+  const f = FAIXA_META[faixa] ?? FAIXA_META.MEDIO
+  return <span className={'badge ' + f.cls}>{f.label}</span>
+}
+function MarcacoesCell({ p }) {
+  return (
+    <span style={{ display: 'inline-flex', gap: 5, flexWrap: 'wrap' }}>
+      <BadgesProduto p={p} />
+    </span>
+  )
+}
+
+// Leituras gerenciais por seção (texto, sem decisão automática de remoção)
+function leituraCampeao(p) {
+  if (p.produto.produtoIsca) return 'Produto isca com alto volume. Avaliar se está puxando recompra ou apenas volume promocional.'
+  if (p.produto.produtoAncora) return 'Produto assinatura com bom volume. Manter destaque no cardápio.'
+  return 'Produto forte em volume. Priorizar disponibilidade, operação e campanhas.'
+}
+function leituraBaixaSaida(p) {
+  if (p.produto.produtoAncora) return 'Produto assinatura com baixo volume. Não remover automaticamente; revisar comunicação, foto, posição no cardápio ou oferta.'
+  if (p.produto.produtoIsca) return 'Produto isca com baixo volume. Revisar se ainda cumpre papel de entrada/oferta.'
+  return 'Baixa saída. Candidato a revisão de cardápio na próxima análise com margem e ficha técnica.'
+}
+function leituraOferta(p) {
+  const dep = p.pOferta >= 60 ? 'Alta dependência de oferta/combo' : 'Dependência moderada de oferta/combo'
+  if (p.produto.produtoIsca) return `${dep}. Produto isca/oferta: a dependência pode ser intencional, mas precisa ser monitorada.`
+  return `${dep}. Grande parte do volume vem de oferta/combo; avaliar se o produto vende bem sozinho ou depende de promoção.`
+}
+function leituraComplemento() {
+  return 'Produto aparece muito como complemento. Pode ser item de apoio, upsell ou composição de pedido.'
+}
+function leituraAssinatura(p) {
+  if (p.faixa === 'ALTO') return 'Assinatura forte. Manter destaque.'
+  if (p.faixa === 'BAIXO' || p.faixa === 'ZERADO') return 'Assinatura com baixo volume. Proteger, mas revisar comunicação/posição.'
+  return 'Assinatura com desempenho intermediário. Monitorar.'
+}
+function leituraIsca(p) {
+  if (p.faixa === 'ALTO') return 'Isca com bom volume. Avaliar se está gerando recompra e venda agregada.'
+  if (p.faixa === 'BAIXO' || p.faixa === 'ZERADO') return 'Isca com baixo volume. Revisar atratividade, preço, campanha ou exposição.'
+  return 'Isca com volume intermediário. Monitorar recompra e venda agregada.'
+}
+const LEITURA_ZERADO =
+  'Produto com zero venda no período. Conferir se estava ativo, se foi lançado recentemente ou se houve erro na planilha.'
+
+// Colunas reutilizáveis das tabelas de diagnóstico
+const COL = {
+  produto: { key: 'prod', label: 'Produto', render: (p) => <span style={{ fontWeight: 500, color: '#111' }}>{p.produto.nome}</span> },
+  total: { key: 'total', label: 'Total vendido', right: true, render: (p) => <strong>{int(p.total)}</strong> },
+  participacao: { key: 'part', label: 'Participação', right: true, render: (p) => pctTxt(p.participacao) },
+  faixa: { key: 'faixa', label: 'Faixa de volume', render: (p) => <FaixaBadge faixa={p.faixa} /> },
+  principal: { key: 'pri', label: 'Principal', right: true, render: (p) => int(p.principal) },
+  complemento: { key: 'comp', label: 'Complemento', right: true, render: (p) => int(p.complemento) },
+  oferta: { key: 'of', label: 'Oferta/Combo', right: true, render: (p) => int(p.oferta) },
+  pctOferta: { key: 'pof', label: '% Oferta/Combo', right: true, render: (p) => pctTxt(p.pOferta) },
+  pctComplemento: { key: 'pcomp', label: '% Complemento', right: true, render: (p) => pctTxt(p.pComplemento) },
+  marcacoes: { key: 'marc', label: 'Marcações', render: (p) => <MarcacoesCell p={p.produto} /> }
+}
+
+function DiagTabela({ rows, cols, leitura, vazio = 'Nenhum produto encontrado nesta categoria.' }) {
+  if (!rows || rows.length === 0) {
+    return <div className="empty-state" style={{ padding: '20px 16px' }}>{vazio}</div>
+  }
+  return (
+    <div className="table-card">
+      <table className="hb-table hb-table-compact">
+        <thead>
+          <tr>
+            {cols.map((c) => (
+              <th key={c.key} style={c.right ? { textAlign: 'right' } : undefined}>{c.label}</th>
+            ))}
+            {leitura && <th>Leitura</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((p) => (
+            <tr key={p.produto.id}>
+              {cols.map((c) => (
+                <td key={c.key} style={c.right ? { textAlign: 'right' } : undefined}>{c.render(p)}</td>
+              ))}
+              {leitura && (
+                <td style={{ fontSize: 11.5, color: '#666', maxWidth: 340, lineHeight: 1.4 }}>{leitura(p)}</td>
+              )}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function SubSecaoDiag({ title, children }) {
+  return (
+    <>
+      <div style={{ fontSize: 13, fontWeight: 600, color: '#111', margin: '18px 0 8px' }}>{title}</div>
+      {children}
+    </>
+  )
+}
+
 export default function AnaliseVendas() {
   const [produtos, setProdutos] = useState([])
   const [produtosErro, setProdutosErro] = useState(null)
@@ -296,6 +410,67 @@ export default function AnaliseVendas() {
   }, [linhasResolvidas])
 
   const naoIdentificadosLista = linhasResolvidas.filter((l) => l.status !== 'ASSOCIADO')
+
+  // ===== Diagnóstico estratégico (V2): métricas derivadas + faixas de volume =====
+  const diag = useMemo(() => {
+    // Base: produtos do ranking estratégico (já exclui commodity e fora da análise)
+    const prods = rankingEstrategico.map((r) => {
+      const total = r.total
+      return {
+        produto: r.produto,
+        total,
+        principal: r.principal,
+        complemento: r.complemento,
+        oferta: r.oferta,
+        pPrincipal: total > 0 ? (r.principal / total) * 100 : 0,
+        pComplemento: total > 0 ? (r.complemento / total) * 100 : 0,
+        pOferta: total > 0 ? (r.oferta / total) * 100 : 0,
+        participacao: 0,
+        faixa: 'MEDIO'
+      }
+    })
+    const totalEstrategico = prods.reduce((s, p) => s + p.total, 0)
+    prods.forEach((p) => {
+      p.participacao = totalEstrategico > 0 ? (p.total / totalEstrategico) * 100 : 0
+    })
+
+    // Faixas por volume, calculadas só entre produtos com venda > 0
+    const comVolume = prods.filter((p) => p.total > 0).sort((a, b) => b.total - a.total)
+    const n = comVolume.length
+    let altoCount = 0
+    let baixoCount = 0
+    if (n > 0) {
+      altoCount = Math.max(1, Math.ceil(n * 0.2))
+      baixoCount = n >= 5 ? Math.max(1, Math.ceil(n * 0.2)) : 0
+      if (altoCount + baixoCount > n) baixoCount = Math.max(0, n - altoCount)
+    }
+    comVolume.forEach((p, i) => {
+      if (i < altoCount) p.faixa = 'ALTO'
+      else if (i >= n - baixoCount) p.faixa = 'BAIXO'
+      else p.faixa = 'MEDIO'
+    })
+    prods.forEach((p) => { if (p.total === 0) p.faixa = 'ZERADO' })
+
+    const campeoes = prods.filter((p) => p.faixa === 'ALTO').sort((a, b) => b.total - a.total)
+    const baixaSaida = prods.filter((p) => p.faixa === 'BAIXO').sort((a, b) => a.total - b.total)
+    const puxadosOferta = prods.filter((p) => p.total > 0 && p.pOferta >= 40).sort((a, b) => b.pOferta - a.pOferta)
+    const puxadosComplemento = prods.filter((p) => p.total > 0 && p.pComplemento >= 30).sort((a, b) => b.pComplemento - a.pComplemento)
+    const assinatura = prods.filter((p) => p.produto.produtoAncora).sort((a, b) => b.total - a.total)
+    const isca = prods.filter((p) => p.produto.produtoIsca).sort((a, b) => b.total - a.total)
+    const zerados = prods.filter((p) => p.total === 0)
+
+    return {
+      prods,
+      totalEstrategico,
+      campeoes,
+      baixaSaida,
+      puxadosOferta,
+      puxadosComplemento,
+      assinatura,
+      isca,
+      zerados
+    }
+  }, [rankingEstrategico])
 
   const temImportacao = linhas.length > 0
 
@@ -491,6 +666,121 @@ export default function AnaliseVendas() {
                 </tbody>
               </table>
             </div>
+          )}
+
+          {/* ===== Diagnóstico estratégico (V2) ===== */}
+          <div className="section-title">Diagnóstico Estratégico</div>
+          <div style={{ fontSize: 11.5, color: '#999', marginBottom: 10 }}>
+            Leitura gerencial por volume. Considera apenas produtos associados e dentro da análise
+            estratégica; bebidas commodity ficam de fora. Não é decisão automática de remoção.
+          </div>
+          {m.associados === 0 ? (
+            <div className="empty-state" style={{ padding: '28px 16px' }}>
+              Associe os itens importados aos produtos para gerar o diagnóstico estratégico.
+            </div>
+          ) : diag.prods.length === 0 ? (
+            <div className="empty-state" style={{ padding: '28px 16px' }}>
+              Nenhum produto elegível para análise estratégica. Verifique se os produtos estão
+              marcados para entrar na análise.
+            </div>
+          ) : (
+            <>
+              {/* Resumo textual dinâmico */}
+              <div className="alert alert-gray" style={{ marginTop: 0, marginBottom: 14 }}>
+                <div className="alert-msg" style={{ color: '#555', lineHeight: 1.6 }}>
+                  Neste período, <strong>{int(diag.campeoes.length)}</strong> produto(s) concentraram
+                  alto volume de vendas. <strong>{int(diag.baixaSaida.length)}</strong> produto(s)
+                  tiveram baixa saída. <strong>{int(diag.puxadosOferta.length)}</strong> produto(s)
+                  dependem fortemente de oferta/combo, e <strong>{int(diag.puxadosComplemento.length)}</strong>{' '}
+                  produto(s) aparecem com alta participação como complemento. Produtos assinatura e
+                  isca foram destacados separadamente para evitar decisões erradas de remoção.
+                </div>
+              </div>
+
+              {/* Cards-resumo do diagnóstico */}
+              <div className="kpi-grid">
+                <Card title="Alto Volume" value={int(diag.campeoes.length)} hint="Campeões de venda" variant="success" />
+                <Card title="Baixo Volume" value={int(diag.baixaSaida.length)} hint="Produtos de baixa saída" variant={diag.baixaSaida.length > 0 ? 'warn' : 'info'} />
+                <Card title="Puxados por Oferta/Combo" value={int(diag.puxadosOferta.length)} hint="≥ 40% via oferta/combo" />
+                <Card title="Puxados por Complemento" value={int(diag.puxadosComplemento.length)} hint="≥ 30% como complemento" />
+              </div>
+              <div className="kpi-grid kpi-grid-3">
+                <Card title="Assinatura Monitorados" value={int(diag.assinatura.length)} hint="Produtos âncora na análise" />
+                <Card title="Isca Monitorados" value={int(diag.isca.length)} hint="Produtos isca na análise" />
+                <Card title="Produtos Zerados" value={int(diag.zerados.length)} hint="Sem venda no período" variant={diag.zerados.length > 0 ? 'warn' : 'success'} />
+              </div>
+
+              <SubSecaoDiag title="1. Campeões de venda">
+                <DiagTabela
+                  rows={diag.campeoes}
+                  cols={[COL.produto, COL.total, COL.participacao, COL.principal, COL.complemento, COL.oferta, COL.marcacoes]}
+                  leitura={leituraCampeao}
+                />
+              </SubSecaoDiag>
+
+              <SubSecaoDiag title="2. Produtos de baixa saída">
+                <DiagTabela
+                  rows={diag.baixaSaida}
+                  cols={[COL.produto, COL.total, COL.participacao, COL.principal, COL.complemento, COL.oferta, COL.marcacoes]}
+                  leitura={leituraBaixaSaida}
+                />
+              </SubSecaoDiag>
+
+              <SubSecaoDiag title="3. Produtos puxados por oferta/combo">
+                <DiagTabela
+                  rows={diag.puxadosOferta}
+                  cols={[COL.produto, COL.total, COL.oferta, COL.pctOferta, COL.principal, COL.complemento]}
+                  leitura={leituraOferta}
+                />
+              </SubSecaoDiag>
+
+              <SubSecaoDiag title="4. Produtos puxados por complemento">
+                <DiagTabela
+                  rows={diag.puxadosComplemento}
+                  cols={[COL.produto, COL.total, COL.complemento, COL.pctComplemento, COL.principal, COL.oferta]}
+                  leitura={leituraComplemento}
+                />
+              </SubSecaoDiag>
+
+              <SubSecaoDiag title="5. Produtos assinatura">
+                <DiagTabela
+                  rows={diag.assinatura}
+                  cols={[COL.produto, COL.total, COL.faixa, COL.participacao, COL.principal, COL.complemento, COL.oferta]}
+                  leitura={leituraAssinatura}
+                  vazio="Nenhum produto assinatura na análise."
+                />
+              </SubSecaoDiag>
+
+              <SubSecaoDiag title="6. Produtos isca">
+                <DiagTabela
+                  rows={diag.isca}
+                  cols={[COL.produto, COL.total, COL.faixa, COL.pctOferta, COL.principal, COL.complemento]}
+                  leitura={leituraIsca}
+                  vazio="Nenhum produto isca na análise."
+                />
+              </SubSecaoDiag>
+
+              <SubSecaoDiag title="7. Produtos sem venda">
+                <DiagTabela
+                  rows={diag.zerados}
+                  cols={[
+                    COL.produto,
+                    {
+                      key: 'st',
+                      label: 'Status estratégico',
+                      render: (p) => (
+                        <span style={{ display: 'inline-flex', gap: 5, flexWrap: 'wrap', alignItems: 'center' }}>
+                          <BadgesProduto p={p.produto} />
+                          <span className="clr-muted" style={{ fontSize: 11 }}>Na análise estratégica</span>
+                        </span>
+                      )
+                    }
+                  ]}
+                  leitura={() => LEITURA_ZERADO}
+                  vazio="Nenhum produto sem venda no período."
+                />
+              </SubSecaoDiag>
+            </>
           )}
 
           {/* ===== Itens não identificados ===== */}
