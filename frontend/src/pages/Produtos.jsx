@@ -993,12 +993,16 @@ export default function Produtos() {
                   ) : tipoP === 'COMBO' ? (
                     (a.quantidadeItensCombo ?? 0) > 0 ? (
                       <>
-                        <MetricRow label="Valor separado">{brl(a.valorItensSeparados)}</MetricRow>
-                        <MetricRow label="Desconto">
+                        <MetricRow label="Valor referência">{brl(a.valorReferenciaCombo)}</MetricRow>
+                        <MetricRow label={Number(a.descontoCombo) < 0 ? 'Mais caro' : 'Economia'}>
                           {a.descontoCombo === null || a.descontoCombo === undefined
                             ? <span className="clr-muted">—</span>
+                            : Number(a.descontoCombo) < 0
+                            ? <span className="clr-red">{brl(Math.abs(Number(a.descontoCombo)))}</span>
+                            : Number(a.descontoCombo) === 0
+                            ? <span className="clr-muted">Sem desconto</span>
                             : (
-                              <span className={Number(a.descontoCombo) < 0 ? 'clr-red' : ''}>
+                              <span className="clr-green">
                                 {brl(a.descontoCombo)}
                                 {a.percentualDescontoCombo !== null && a.percentualDescontoCombo !== undefined
                                   ? ` (${pct(a.percentualDescontoCombo)})`
@@ -2284,9 +2288,9 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                 <div className="section-title">Resumo do Combo</div>
                 <div className="grid-3">
                   <Card
-                    title="Valor dos Itens Separados"
-                    value={comboItensResumo.length === 0 ? '—' : brl(analise?.valorItensSeparados)}
-                    hint="Soma dos preços individuais"
+                    title="Valor de Referência do Combo"
+                    value={comboItensResumo.length === 0 ? '—' : brl(analise?.valorReferenciaCombo)}
+                    hint="Produtos/bebidas + adicionais exclusivos do combo"
                   />
                   <Card
                     title="Preço do Combo"
@@ -2294,26 +2298,52 @@ function FichaModal({ produtoId, onClose, onChanged }) {
                     hint="Cadastrado no combo"
                     variant="brand"
                   />
-                  <Card
-                    title="Desconto do Combo"
-                    value={
-                      analise?.descontoCombo === null || analise?.descontoCombo === undefined
-                        ? '—'
-                        : brl(analise.descontoCombo)
+                  {(() => {
+                    const d = analise?.descontoCombo
+                    if (d === null || d === undefined) {
+                      return <Card title="Desconto do Combo" value="—" hint="Referência − preço do combo" />
                     }
-                    hint={
-                      analise?.percentualDescontoCombo === null ||
-                      analise?.percentualDescontoCombo === undefined
-                        ? 'Itens separados − preço do combo'
-                        : `${pct(analise.percentualDescontoCombo)} do valor separado`
+                    const dn = Number(d)
+                    if (dn > 0) {
+                      return (
+                        <Card
+                          title="Economia do Combo"
+                          value={brl(dn)}
+                          hint={
+                            analise?.percentualDescontoCombo === null || analise?.percentualDescontoCombo === undefined
+                              ? 'Referência − preço do combo'
+                              : `${pct(analise.percentualDescontoCombo)} do valor de referência`
+                          }
+                          variant="success"
+                        />
+                      )
                     }
-                  />
+                    if (dn === 0) {
+                      return <Card title="Economia do Combo" value="Sem desconto" hint="Preço igual ao valor de referência" />
+                    }
+                    return (
+                      <Card
+                        title="Economia do Combo"
+                        value={`${brl(Math.abs(dn))} mais caro`}
+                        hint="Preço acima do valor de referência"
+                        variant="danger"
+                      />
+                    )
+                  })()}
                 </div>
+                {comboItensResumo.length > 0 && (
+                  <div style={{ fontSize: 11.5, color: '#999', marginTop: 2, marginBottom: 2 }}>
+                    Referência = produtos/bebidas separados ({brl(analise?.valorItensSeparados)})
+                    {Number(analise?.custoAdicionaisCombo) > 0
+                      ? ` + adicionais exclusivos do combo (${brl(analise?.custoAdicionaisCombo)})`
+                      : ' (sem adicionais)'}
+                  </div>
+                )}
                 <div className="grid-3">
                   <Card
                     title="Custo Total do Combo"
                     value={comboItensResumo.length === 0 ? '—' : brl(analise?.custoTotalCombo)}
-                    hint="Itens (sem embalagem individual) + adicionais do combo"
+                    hint="Itens (com embalagem marcada) + adicionais do combo"
                   />
                   <Card
                     title="CMV do Combo"

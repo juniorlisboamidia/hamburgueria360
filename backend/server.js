@@ -1949,17 +1949,21 @@ app.get('/api/produtos/:id/analise', async (req, res) => {
       const comboItensResumo = comboItens.map(comboItemOut);
       const comboInsumosResumo = comboInsumos.map(comboInsumoOut);
       const temItens = comboItensResumo.length > 0;
+      // Preço que o cliente pagaria comprando os produtos/bebidas separadamente
       const valorItensSeparados = comboItensResumo.reduce((s, i) => s + i.totalVenda, 0);
-      // Custo dos itens (já sem embalagem individual por padrão) + insumos adicionais do combo
+      // Custo dos itens (embalagem individual conforme marcação) + insumos adicionais do combo
       const custoItensCombo = comboItensResumo.reduce((s, i) => s + i.totalCusto, 0);
       const custoAdicionaisCombo = comboInsumosResumo.reduce((s, i) => s + i.custoTotal, 0);
       const embalagensDesconsideradas = comboItensResumo.reduce((s, i) => s + i.custoEmbalagemRemovido, 0);
       const custoTotalCombo = custoItensCombo + custoAdicionaisCombo;
 
-      const descontoCombo = temItens ? valorItensSeparados - precoVenda : null;
+      // Valor de referência: itens vendidos separadamente + adicionais exclusivos
+      // do combo (Fini, suco, brinde...). É contra esse valor que se mede a economia.
+      const valorReferenciaCombo = valorItensSeparados + custoAdicionaisCombo;
+      const descontoCombo = temItens ? valorReferenciaCombo - precoVenda : null;
       const percentualDescontoCombo =
-        temItens && valorItensSeparados > 0
-          ? (descontoCombo / valorItensSeparados) * 100
+        temItens && valorReferenciaCombo > 0
+          ? (descontoCombo / valorReferenciaCombo) * 100
           : null;
       const cmvComboPercentual =
         temItens && precoVenda > 0 ? (custoTotalCombo / precoVenda) * 100 : null;
@@ -1981,10 +1985,10 @@ app.get('/api/produtos/:id/analise', async (req, res) => {
         mensagemDiagnostico = 'Combo vendido sem lucro. Revise itens e preço.';
       } else {
         if (percentualDescontoCombo !== null && percentualDescontoCombo > 20) {
-          alertasCombo.push('Desconto do combo acima de 20% do valor separado.');
+          alertasCombo.push('Desconto do combo acima de 20% do valor de referência.');
         }
         if (descontoCombo !== null && descontoCombo < 0) {
-          alertasCombo.push('Combo mais caro que os itens separados.');
+          alertasCombo.push('Combo mais caro que o valor de referência (itens + adicionais).');
         }
         if (margemComboPercentual !== null && margemComboPercentual < 25) {
           alertasCombo.push('Margem do combo abaixo de 25%.');
@@ -2009,6 +2013,7 @@ app.get('/api/produtos/:id/analise', async (req, res) => {
         comboItensResumo,
         comboInsumosResumo,
         valorItensSeparados: round2(valorItensSeparados),
+        valorReferenciaCombo: round2(valorReferenciaCombo),
         custoItensCombo: round2(custoItensCombo),
         custoAdicionaisCombo: round2(custoAdicionaisCombo),
         embalagensDesconsideradas: round2(embalagensDesconsideradas),
